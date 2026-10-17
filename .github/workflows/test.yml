@@ -1,0 +1,24 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lua:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - run: lua5.4 tests/test.lua
+
+  cpp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y lua5.4 liblua5.4-dev cmake g++
+      - run: cmake -B build -S .
+      - run: cmake --build build
+      - run: ./build/dazeghost --minify dazeghost.lua -o /tmp/dg.min.lua
+      - run: lua5.4 -e "assert(loadfile('/tmp/dg.min.lua'))"
