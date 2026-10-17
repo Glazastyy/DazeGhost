@@ -11,7 +11,7 @@
 namespace fs = std::filesystem;
 
 static void usage() {
-    std::cerr << "usage: dazeghost [--minify|--obfuscate] [-o out.lua] file.lua\n";
+    std::cerr << "usage: dazeghost [--minify|--obfuscate] [--anti-ia] [-o out.lua] file.lua\n";
 }
 
 static std::string slurp(const fs::path& path) {
@@ -46,6 +46,7 @@ static fs::path find_root(const fs::path& argv0) {
 
 int main(int argc, char** argv) {
     std::string mode = "obfuscate";
+    bool anti_ia = false;
     std::string input;
     std::string output;
     for (int i = 1; i < argc; ++i) {
@@ -60,6 +61,10 @@ int main(int argc, char** argv) {
         }
         if (a == "--obfuscate") {
             mode = "obfuscate";
+            continue;
+        }
+        if (a == "--anti-ia") {
+            anti_ia = true;
             continue;
         }
         if (a == "-o") {
@@ -122,7 +127,14 @@ int main(int argc, char** argv) {
         return 1;
     }
     lua_pushlstring(L, src.data(), src.size());
-    if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
+    int nargs = 1;
+    if (mode == "obfuscate") {
+        lua_newtable(L);
+        lua_pushboolean(L, anti_ia ? 1 : 0);
+        lua_setfield(L, -2, "anti_ia");
+        nargs = 2;
+    }
+    if (lua_pcall(L, nargs, 1, 0) != LUA_OK) {
         std::cerr << lua_tostring(L, -1) << "\n";
         lua_close(L);
         return 1;

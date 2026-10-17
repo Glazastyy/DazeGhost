@@ -1,6 +1,7 @@
 local parser = require("src.parser")
 local bind = require("src.bind")
 local emit = require("src.emit")
+local crypt = require("src.crypt")
 
 local M = {}
 
@@ -39,7 +40,7 @@ local function walk(node, fn)
     end
 end
 
-function M.obfuscate(src)
+function M.obfuscate(src, opts)
     local ast = bind.bind(parser.parse(src))
     walk(ast, function(node)
         if node.tag == "name" and node.decl then
@@ -48,7 +49,7 @@ function M.obfuscate(src)
             node.value = encodeString(node.value)
         end
     end)
-    return emit.emit(ast)
+    return crypt.seal(emit.emit(ast), opts)
 end
 
 return M

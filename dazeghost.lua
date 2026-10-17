@@ -10,11 +10,12 @@ local minify = require("src.minify")
 local obfuscate = require("src.obfuscate")
 
 local function usage()
-    io.stderr:write("usage: dazeghost [--minify|--obfuscate] [-o out.lua] file.lua\n")
+    io.stderr:write("usage: dazeghost [--minify|--obfuscate] [--anti-ia] [-o out.lua] file.lua\n")
     os.exit(2)
 end
 
 local mode = "obfuscate"
+local anti_ia = false
 local input, output
 local i = 1
 while i <= #arg do
@@ -25,6 +26,8 @@ while i <= #arg do
         mode = "minify"
     elseif a == "--obfuscate" then
         mode = "obfuscate"
+    elseif a == "--anti-ia" then
+        anti_ia = true
     elseif a == "-o" then
         i = i + 1
         output = arg[i]
@@ -58,7 +61,7 @@ local out
 if mode == "minify" then
     out = minify.minify(src)
 else
-    out = obfuscate.obfuscate(src)
+    out = obfuscate.obfuscate(src, { anti_ia = anti_ia })
 end
 
 if output then

@@ -2,14 +2,15 @@
 
 Lua 5.4 minifier and obfuscator. Pipeline: lex → parse → bind → transform → emit.
 
-The analysis pipeline is Lua. The optional CLI is a C++17 host that loads that pipeline through the Lua 5.4 C API.
-
 ## What it does
 
 - **minify**: parse Lua 5.4, drop comments and extra whitespace, reprint a compact equivalent program
-- **obfuscate**: minify, then rename locals / parameters / loop variables to `_1`, `_2`, … and rewrite string literals as decimal escapes
+- **obfuscate**: minify, rename locals / parameters / loop variables to `_1`, `_2`, …, rewrite string literals as decimal escapes, compile with `string.dump`, then encrypt the bytecode with a rolling key
+- **`--anti-ia`**: with obfuscate, also emit unused restore helpers and notes that look like the real decoder (wrong key schedule, text mode instead of bytecode). The running program does not call them
 
 Globals, table keys written as `name =`, and method names are left alone.
+
+This will not stop someone who extracts the live loader and the key from the file. It is meant to make casual reading and automated reconstruction expensive.
 
 ## Requirements
 
@@ -21,6 +22,7 @@ Globals, table keys written as `name =`, and method names are left alone.
 ```bash
 lua5.4 dazeghost.lua --minify file.lua
 lua5.4 dazeghost.lua --obfuscate -o out.lua file.lua
+lua5.4 dazeghost.lua --obfuscate --anti-ia -o out.lua file.lua
 ```
 
 Default mode is `--obfuscate`.
@@ -34,6 +36,7 @@ local obfuscate = require("src.obfuscate")
 
 print(minify.minify(src))
 print(obfuscate.obfuscate(src))
+print(obfuscate.obfuscate(src, { anti_ia = true }))
 ```
 
 ## C++ CLI
@@ -42,7 +45,7 @@ print(obfuscate.obfuscate(src))
 cmake -B build -S .
 cmake --build build
 ./build/dazeghost --minify file.lua
-./build/dazeghost --obfuscate -o out.lua file.lua
+./build/dazeghost --obfuscate --anti-ia -o out.lua file.lua
 ```
 
 The binary looks for `src/parser.lua` next to the executable, one directory up, in `$DAZEGHOST_ROOT`, or in the current working directory.
@@ -59,11 +62,10 @@ lua5.4 tests/test.lua
 - `src/parser.lua` — recursive-descent + Pratt parser
 - `src/bind.lua` — lexical scope for locals
 - `src/emit.lua` — compact printer
+- `src/crypt.lua` — bytecode seal and optional decoy restore
 - `src/minify.lua` / `src/obfuscate.lua`
 - `dazeghost.lua` — Lua CLI
-- `cpp/main.cpp` — C++ CLI host
-
-This is not a bytecode VM and it will not hide a program from someone who can run `luac -l`. It is for size and for making source harder to read.
+- `cpp/main.cpp` — C++ CLI
 
 ## License
 
@@ -75,14 +77,15 @@ MIT
 
 Minificador e ofuscador de Lua 5.4. Pipeline: lex → parse → bind → transform → emit.
 
-A análise é em Lua. O CLI opcional é um host C++17 que carrega esse pipeline pela API C do Lua 5.4.
-
 ## O que faz
 
 - **minify**: parseia Lua 5.4, tira comentários e espaço extra, reimprime o programa compacto
-- **obfuscate**: minifica, troca locais / parâmetros / variáveis de loop por `_1`, `_2`, … e reescreve strings como escapes decimais
+- **obfuscate**: minifica, troca locais / parâmetros / variáveis de loop por `_1`, `_2`, …, reescreve strings como escapes decimais, compila com `string.dump` e cifra o bytecode com uma chave rolante
+- **`--anti-ia`**: no obfuscate, também emite helpers e notas de restore que parecem o decoder de verdade (agenda de chave errada, modo texto em vez de bytecode). O programa que roda não chama isso
 
 Globais, chaves de tabela no estilo `nome =` e nomes de método ficam.
+
+Isso não para quem extrair o loader ao vivo e a chave do arquivo. Serve pra deixar leitura casual e reconstrução automática cara.
 
 ## Requisitos
 
@@ -94,6 +97,7 @@ Globais, chaves de tabela no estilo `nome =` e nomes de método ficam.
 ```bash
 lua5.4 dazeghost.lua --minify arquivo.lua
 lua5.4 dazeghost.lua --obfuscate -o saida.lua arquivo.lua
+lua5.4 dazeghost.lua --obfuscate --anti-ia -o saida.lua arquivo.lua
 ```
 
 O modo padrão é `--obfuscate`.
@@ -107,6 +111,7 @@ local obfuscate = require("src.obfuscate")
 
 print(minify.minify(src))
 print(obfuscate.obfuscate(src))
+print(obfuscate.obfuscate(src, { anti_ia = true }))
 ```
 
 ## CLI em C++
@@ -115,7 +120,7 @@ print(obfuscate.obfuscate(src))
 cmake -B build -S .
 cmake --build build
 ./build/dazeghost --minify arquivo.lua
-./build/dazeghost --obfuscate -o saida.lua arquivo.lua
+./build/dazeghost --obfuscate --anti-ia -o saida.lua arquivo.lua
 ```
 
 O binário procura `src/parser.lua` ao lado do executável, um diretório acima, em `$DAZEGHOST_ROOT` ou no diretório atual.
@@ -132,11 +137,10 @@ lua5.4 tests/test.lua
 - `src/parser.lua` — parser recursive-descent + Pratt
 - `src/bind.lua` — escopo léxico dos locais
 - `src/emit.lua` — impressão compacta
+- `src/crypt.lua` — selo de bytecode e restore isca
 - `src/minify.lua` / `src/obfuscate.lua`
 - `dazeghost.lua` — CLI Lua
-- `cpp/main.cpp` — host C++ do CLI
-
-Não é uma VM de bytecode e não esconde o programa de quem roda `luac -l`. Serve para tamanho e para deixar o fonte mais difícil de ler.
+- `cpp/main.cpp` — CLI C++
 
 ## Licença
 

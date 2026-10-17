@@ -117,5 +117,18 @@ do
     check("recursion", exec(obfuscate.obfuscate(src)) == 120)
 end
 
+do
+    local src = [[
+        local function add(x, y)
+            return x + y
+        end
+        return add(2, 3)
+    ]]
+    local out = obfuscate.obfuscate(src, { anti_ia = true })
+    check("anti-ia load", exec(out) == 5, out)
+    check("anti-ia decoy present", out:find("restore_v1", 1, true) and out:find("restore_legacy", 1, true), out)
+    check("anti-ia decoy not called", not out:find("return restore_", 1, true))
+end
+
 print(failed == 0 and "all passed" or (failed .. " failed"))
 os.exit(failed == 0 and 0 or 1)
