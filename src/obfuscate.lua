@@ -18,6 +18,14 @@ local function chainContext(layer)
     return "DazeGhost/chain/v1/" .. tostring(layer)
 end
 
+local layerProfiles = {
+    { cipher_variant = 1, runtime = "linear" },
+    { cipher_variant = 2, runtime = "state" },
+    { cipher_variant = 3, runtime = "table" },
+    { cipher_variant = 4, runtime = "linear" },
+    { cipher_variant = 5, runtime = "state" }
+}
+
 local function hash(s)
     local value = 2166136261
     for i = 1, #s do
@@ -282,6 +290,11 @@ function M.obfuscate(src, opts)
         end
         if opts.noise_density == nil then
             step.noise_density = round == 1 and 25 or 8
+        end
+        local profile = layerProfiles[((round - 1) % #layerProfiles) + 1]
+        step.cipher_variant = opts.cipher_variant or profile.cipher_variant
+        if opts.runtime == nil or opts.runtime == "auto" then
+            step.runtime = profile.runtime
         end
         if layerSecrets then
             step.secret = layerSecrets[round]

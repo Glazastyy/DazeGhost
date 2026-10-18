@@ -81,7 +81,7 @@ If both `--minify` and `--obfuscate` are supplied, the last operation-selection 
 | `--rounds N`                  | `1`        | `1` to `5`                         | Complete sealing rounds. Size and generation cost grow substantially with each round.                                        |
 | `--density N`                 | `100`      | `1` to `100`                       | Percentage of eligible decoy insertion points receiving decoy material.                                                      |
 | `--mode VALUE`                | `bytecode` | `bytecode`, `text`                 | Stores compiled bytecode or transformed source. Bytecode is usually smaller but less portable.                               |
-| `--runtime VALUE`             | `auto`     | `auto`, `linear`, `state`, `table` | Selects the generated dispatcher. `auto` diversifies the dispatcher per build.                                               |
+| `--runtime VALUE`             | `auto`     | `auto`, `linear`, `state`, `table` | Selects the generated dispatcher. In automatic multi-round mode, the dispatcher is varied by layer profile.                  |
 | `--preset VALUE`              | `balanced` | `compact`, `balanced`, `strong`    | Applies a tested transformation profile. Explicit options always override the preset.                                        |
 | `--name-generator VALUE`      | `random`   | `random`, `compact`, `mangled`     | Selects the generator used for local and generated identifiers.                                                              |
 | `--min-chunk-size N`          | Adaptive   | `1` to `4096`                      | Minimum encrypted data-block size.                                                                                           |
@@ -146,6 +146,8 @@ The decoy file is parsed as data and never executed during generation.
 ### AST transformation pipeline
 
 The default pipeline runs `split_strings`, `numbers_to_expressions`, `constant_array`, `proxify_locals`, and the optional `watermark` stage before local renaming, string encoding, and control-flow flattening. Each stage can be disabled independently with its CLI flag.
+
+Automatic multi-round sealing assigns five rotating protection profiles. The profiles combine five state-update schedules with linear, state-machine, and table dispatchers. They also receive independent random block layouts, names, seeds, opcodes, noise, and password-chain material. Explicit `--runtime` selects the dispatcher family, but the state-update schedule still changes by round unless a library caller supplies `cipher_variant` directly. This makes the layers structurally different without claiming that any local obfuscation defeats a determined analyst.
 
 Local and generated identifiers use random legal Lua names with variable length and mixed case. The default build obtains fresh 128-bit operating-system entropy, so repeated builds with identical inputs produce different names and different transformation layouts. Supplying `--seed` intentionally makes the identifier sequence and the complete artifact reproducible.
 
@@ -361,7 +363,7 @@ local obfuscate = require("src.obfuscate")
 local result = obfuscate.obfuscate(source, options)
 ```
 
-Important options include `anti_ia`, `decoy_src`, `decoy_path`, `rounds`, `mix_original`, `decoy_density`, `max_decoy_fragments`, `flatten`, `rename_locals`, `encode_strings`, `split_strings`, `split_min_length`, `numbers_to_expressions`, `constant_array`, `proxify_locals`, `watermark`, `anti_tamper`, `steps`, `min_chunk_size`, `max_chunk_size`, `noise_density`, `strip`, `mode`, `runtime`, `seed`, `secret`, `chain_context`, `chain_next`, `max_output_bytes`, `max_intermediate_bytes`, `compress_rounds`, and `stage_writer`.
+Important options include `anti_ia`, `decoy_src`, `decoy_path`, `rounds`, `mix_original`, `decoy_density`, `max_decoy_fragments`, `flatten`, `rename_locals`, `encode_strings`, `split_strings`, `split_min_length`, `numbers_to_expressions`, `constant_array`, `proxify_locals`, `watermark`, `anti_tamper`, `steps`, `min_chunk_size`, `max_chunk_size`, `noise_density`, `strip`, `mode`, `runtime`, `cipher_variant`, `seed`, `secret`, `chain_context`, `chain_next`, `max_output_bytes`, `max_intermediate_bytes`, `compress_rounds`, and `stage_writer`.
 
 `stage_writer` receives `(data, round)` and must return the string passed into the next round. The C++ CLI supplies this callback to provide staged file boundaries.
 
@@ -438,6 +440,7 @@ lua5.4 tests/seed.lua
 lua5.4 tests/compress.lua
 lua5.4 tests/digest.lua
 lua5.4 tests/chain.lua
+lua5.4 tests/layers.lua
 lua5.4 tests/password.lua
 lua5.4 tests/transformations.lua
 lua5.4 tests/cli/run.lua
