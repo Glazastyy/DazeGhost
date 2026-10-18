@@ -23,8 +23,14 @@ end
 return string.pack('>I4I4I4I4I4I4I4I4',a0,b0,c0,d0,e0,f0,g0,h0)
 end
 local function dgHex(s)local t={};for i=1,#s do t[i]=string.format('%02x',s:byte(i)) end;return table.concat(t) end
-local function dgHmac(k,s)
-if #k>64 then k=dgRaw(k) end;k=k..string.rep('\0',64-#k);local i,o={},{};for n=1,64 do local b=k:byte(n);i[n]=string.char(b~0x36);o[n]=string.char(b~0x5C) end;return dgHex(dgRaw(table.concat(o)..dgRaw(table.concat(i)..s)))
+local function dgHmacRaw(k,s)
+if #k>64 then k=dgRaw(k) end;k=k..string.rep('\0',64-#k);local i,o={},{};for n=1,64 do local b=k:byte(n);i[n]=string.char(b~0x36);o[n]=string.char(b~0x5C) end;return dgRaw(table.concat(o)..dgRaw(table.concat(i)..s))
+end
+local function dgHmac(k,s)return dgHex(dgHmacRaw(k,s)) end
+local function dgPbkdf2(k,s,c,l)
+local r={};local p=0;local b=1
+while p<l do local u=dgHmacRaw(k,s..string.pack('>I4',b));local t={u:byte(1,#u)};for _=2,c do u=dgHmacRaw(k,u);for i=1,#u do t[i]=t[i]~u:byte(i) end end;for i=1,#t do p=p+1;if p>l then break end;r[p]=string.char(t[i]) end;b=b+1 end
+return table.concat(r)
 end
 local function dgEq(a,b)if #a~=#b then return false end;local x=0;for i=1,#a do x=x|(a:byte(i)~b:byte(i)) end;return x==0 end
 ]]
@@ -33,6 +39,7 @@ local function dgEq(a,b)if #a~=#b then return false end;local x=0;for i=1,#a do 
             dgRaw = "dgRaw",
             dgHex = "dgHex",
             dgHmac = "dgHmac",
+            dgPbkdf2 = "dgPbkdf2",
             dgEq = "dgEq"
         }
     end
@@ -42,7 +49,7 @@ local function dgEq(a,b)if #a~=#b then return false end;local x=0;for i=1,#a do 
         E = true, Q = true, V = true, W = true, string = true, table = true,
     }
     local nextName = names.new("random", rand, used)
-    local order = { "dgK", "dgRoundConstantsHex", "dgN", "dgR", "dgRaw", "dgHex", "dgHmac", "dgEq" }
+    local order = { "dgK", "dgRoundConstantsHex", "dgN", "dgR", "dgRaw", "dgHex", "dgHmacRaw", "dgHmac", "dgPbkdf2", "dgEq" }
     local replacements = {
         dgK = nextName(),
         dgRoundConstantsHex = nextName(),
@@ -50,7 +57,9 @@ local function dgEq(a,b)if #a~=#b then return false end;local x=0;for i=1,#a do 
         dgR = nextName(),
         dgRaw = nextName(),
         dgHex = nextName(),
+        dgHmacRaw = nextName(),
         dgHmac = nextName(),
+        dgPbkdf2 = nextName(),
         dgEq = nextName()
     }
     for _, original in ipairs(order) do

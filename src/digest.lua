@@ -70,8 +70,7 @@ function M.raw(data)
     return string.pack(">I4I4I4I4I4I4I4I4", h0, h1, h2, h3, h4, h5, h6, h7)
 end
 
-function M.hex(data)
-    local raw = M.raw(data)
+local function hexRaw(raw)
     local result = {}
     for index = 1, #raw do
         result[index] = string.format("%02x", raw:byte(index))
@@ -79,7 +78,18 @@ function M.hex(data)
     return table.concat(result)
 end
 
-function M.hmac(key, data)
+function M.hex(data)
+    return hexRaw(M.raw(data))
+end
+
+function M.encode(data)
+    if type(data) ~= "string" then
+        error("hex input must be a string", 2)
+    end
+    return hexRaw(data)
+end
+
+local function hmacRaw(key, data)
     if type(key) ~= "string" or type(data) ~= "string" then
         error("HMAC key and input must be strings", 2)
     end
@@ -94,7 +104,45 @@ function M.hmac(key, data)
         inner[index] = string.char(value ~ 0x36)
         outer[index] = string.char(value ~ 0x5C)
     end
-    return M.hex(table.concat(outer) .. M.raw(table.concat(inner) .. data))
+    return M.raw(table.concat(outer) .. M.raw(table.concat(inner) .. data))
+end
+
+function M.hmac(key, data)
+    return hexRaw(hmacRaw(key, data))
+end
+
+function M.pbkdf2(password, salt, iterations, length)
+    if type(password) ~= "string" or type(salt) ~= "string" then
+        error("PBKDF2 password and salt must be strings", 2)
+    end
+    if type(iterations) ~= "number" or iterations % 1 ~= 0 or iterations < 1 then
+        error("PBKDF2 iterations must be a positive integer", 2)
+    end
+    if type(length) ~= "number" or length % 1 ~= 0 or length < 1 then
+        error("PBKDF2 length must be a positive integer", 2)
+    end
+    local result = {}
+    local produced = 0
+    local block = 1
+    while produced < length do
+        local u = hmacRaw(password, salt .. string.pack(">I4", block))
+        local accumulator = { u:byte(1, #u) }
+        for _ = 2, iterations do
+            u = hmacRaw(password, u)
+            for index = 1, #u do
+                accumulator[index] = accumulator[index] ~ u:byte(index)
+            end
+        end
+        for index = 1, #accumulator do
+            produced = produced + 1
+            if produced > length then
+                break
+            end
+            result[produced] = string.char(accumulator[index])
+        end
+        block = block + 1
+    end
+    return table.concat(result)
 end
 
 return M

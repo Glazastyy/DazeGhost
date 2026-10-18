@@ -288,6 +288,8 @@ The password option is a runtime access gate and key-diversification layer:
 4. The entered value is checked before payload execution.
 5. A process-global cache avoids repeated prompts through nested sealing layers.
 
+Each password-protected layer has a fresh 128-bit salt and derives a 256-bit verifier and layer material with PBKDF2-HMAC-SHA-256 using 10,000 iterations. The salt is public and unique to the artifact; it prevents reusable digest tables but cannot prevent offline guesses against a weak human password. Generated 128-bit secrets remain the preferred option. Argon2id or scrypt would provide stronger memory hardness, but the portable Lua loader does not embed an unaudited implementation; native deployments should use a separately audited memory-hard KDF if that threat model is required.
+
 The loader requires `io.read` and standard input. For non-interactive use, provide the secret through a controlled pipe. Do not log or expose it.
 
 When enabled, the anti-tamper option checks for an active `debug` hook through `debug.gethook`. This is intentionally best-effort and may reject debuggers or profilers; a host-controlled process can still remove or replace the check.
@@ -505,8 +507,8 @@ For real authorization, licensing, and sensitive business logic, keep the decisi
 | `src/weave.lua`         | Conservative decoy weaving.                                                                                                 |
 | `src/crypt.lua`         | Payload sealing, password verification, HMAC-SHA-256 integrity, and runtime loader generation.                              |
 | `src/compress.lua`      | LZ-style packing and single-file loader generation.                                                                         |
-| `src/digest.lua`        | SHA-256 and HMAC-SHA-256 implementation used during generation.                                                             |
-| `src/digest_runtime.lua` | Runtime digest template with per-build identifier diversification.                                                         |
+| `src/digest.lua`        | SHA-256, HMAC-SHA-256, hex encoding, and PBKDF2-HMAC-SHA-256 implementation used during generation.                     |
+| `src/digest_runtime.lua` | Runtime digest and PBKDF2 template with per-build identifier diversification.                                             |
 | `src/random.lua`        | 128-bit random-state initialization.                                                                                        |
 | `src/minify.lua`        | Minification API.                                                                                                           |
 | `src/obfuscate.lua`     | Transformation and multi-round orchestration API.                                                                           |
