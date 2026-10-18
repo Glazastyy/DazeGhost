@@ -14,6 +14,7 @@ namespace fs = std::filesystem;
 
 struct Options {
     std::string mode = "obfuscate";
+    std::string payload_mode = "bytecode";
     std::string runtime = "auto";
     std::string input;
     std::string decoy = "caos.lua";
@@ -147,7 +148,7 @@ static bool parse_arguments(int argc, char** argv, Options& options, bool& anti_
         }
         if (argument == "--mode") {
             if (!next_value(index, argc, argv, value) || (value != "bytecode" && value != "text")) return false;
-            options.mode = value;
+            options.payload_mode = value;
             continue;
         }
         if (argument == "--runtime") {
@@ -262,7 +263,7 @@ int main(int argc, char** argv) {
         set_string(state, "decoy_src", options.decoy);
         set_integer(state, "rounds", options.rounds);
         set_integer(state, "decoy_density", options.density);
-        set_string(state, "mode", "bytecode");
+        set_string(state, "mode", options.payload_mode);
         set_string(state, "runtime", options.runtime);
         set_integer(state, "min_chunk_size", options.min_chunk_size);
         set_integer(state, "max_chunk_size", options.max_chunk_size);

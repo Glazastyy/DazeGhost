@@ -47,9 +47,10 @@ do
         return f(3)
     ]]
     local out = obfuscate.obfuscate(src)
+    local transformed = obfuscate.transform(src)
     check("obfuscate load", load(out, "o", "t"), out)
     check("obfuscate result", exec(out) == 13, out)
-    check("obfuscate renames locals", not out:find("local a") and not out:find("function f"), out)
+    check("obfuscate renames locals", not transformed:find("local a") and not transformed:find("function f"), transformed)
 end
 
 do

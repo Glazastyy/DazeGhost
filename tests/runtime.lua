@@ -18,6 +18,8 @@ local expected = values(source)
 local outputs = {}
 for _, runtime in ipairs({ "linear", "state", "table" }) do
     local protected = crypt.seal(source, { seed = 441, runtime = runtime, mode = "text" })
+    assert(not protected:find("local K=", 1, true))
+    assert(not protected:find("function(P,I,H,A,B,Z,K,M,N,E,Q)", 1, true))
     local actual = values(protected)
     assert(actual.n == expected.n)
     for i = 1, expected.n do

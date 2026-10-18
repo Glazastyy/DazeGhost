@@ -62,14 +62,30 @@ local function validate(opts)
     return minimum, maximum
 end
 
+local function rotate(value, amount)
+    return ((value << amount) | (value >> (32 - amount))) & MASK
+end
+
 local function encrypt(data, key, multiplier, increment)
-    local state = key
+    local a = key
+    local b = multiplier
+    local c = increment
+    local d = (key ~ multiplier ~ increment) & MASK
     local result = {}
     for i = 1, #data do
-        state = (state * multiplier + increment) & MASK
-        local byte = (data:byte(i) ~ ((state >> 16) & 255) ~ ((state >> 7) & 255) ~ (i & 255)) & 255
-        result[i] = string.char(byte)
-        state = (state ~ (byte * 257 + i)) & MASK
+        local input = data:byte(i)
+        a = (a + b + i) & MASK
+        b = rotate((b ~ a) & MASK, 7)
+        c = (c + d + a) & MASK
+        d = rotate((d ~ c) & MASK, 11)
+        a = (a + d + increment) & MASK
+        c = rotate((c ~ b) & MASK, 17)
+        b = (b + c + multiplier) & MASK
+        d = rotate((d ~ a) & MASK, 19)
+        local output = (input ~ ((a ~ b ~ c ~ d) & 255)) & 255
+        result[i] = string.char(output)
+        a = (a ~ (output * 257 + i)) & MASK
+        d = (d + output + i) & MASK
     end
     return table.concat(result)
 end
@@ -87,6 +103,11 @@ local function packBytes(data)
         result[i] = tostring(data:byte(i))
     end
     return "{" .. table.concat(result, ",") .. "}"
+end
+
+local function splitMaterial(value, salt)
+    local first = ((value ~ salt) * 1664525 + 1013904223) & MASK
+    return first, (value ~ first) & MASK
 end
 
 local function assemble(data, minimum, maximum, random)
@@ -145,24 +166,25 @@ local function assemble(data, minimum, maximum, random)
 end
 
 local function makeLoader(blocks, instructions, entry, opChunk, opNoise, opEnd, key, multiplier, increment, checksum, mode, variant)
+    local keyFirst, keySecond = splitMaterial(key, 0xA341316C)
+    local multiplierFirst, multiplierSecond = splitMaterial(multiplier, 0xC8013EA4)
+    local incrementFirst, incrementSecond = splitMaterial(increment, 0xAD90777D)
     local args = table.concat({
         blocks, instructions, tostring(entry), tostring(opChunk), tostring(opNoise), tostring(opEnd),
-        tostring(key), tostring(multiplier), tostring(increment), tostring(checksum),
+        tostring(keyFirst), tostring(keySecond), tostring(multiplierFirst), tostring(multiplierSecond),
+        tostring(incrementFirst), tostring(incrementSecond), tostring(checksum),
         mode == "text" and "'t'" or "'b'"
     }, ",")
-    local prefix = "return(function(P,I,H,A,B,Z,K,M,N,E,Q)"
+    local prefix = "return(function(P,I,H,A,B,Z,X1,X2,X3,X4,X5,X6,E,Q)local q1=(X1~X2)&0xFFFFFFFF;local q2=(X3~X4)&0xFFFFFFFF;local q3=(X5~X6)&0xFFFFFFFF;local CH,CONCAT=string.char,table.concat;local O={};local h=2166136261;local a=q1;local b=q2;local c=q3;local d=(q1~q2~q3)&0xFFFFFFFF;local pos=0;local function step(input)pos=pos+1;a=(a+b+pos)&0xFFFFFFFF;b=(((b~a)<<7)|((b~a)>>25))&0xFFFFFFFF;c=(c+d+a)&0xFFFFFFFF;d=(((d~c)<<11)|((d~c)>>21))&0xFFFFFFFF;a=(a+d+q3)&0xFFFFFFFF;c=(((c~b)<<17)|((c~b)>>15))&0xFFFFFFFF;b=(b+c+q2)&0xFFFFFFFF;d=(((d~a)<<19)|((d~a)>>13))&0xFFFFFFFF;local output=(input~((a~b~c~d)&0xFF))&0xFF;O[pos]=CH(output);h=((h~output)*16777619)&0xFFFFFFFF;a=(a~(input*257+pos))&0xFFFFFFFF;d=(d+input+pos)&0xFFFFFFFF end;"
     local suffix = "if h~=E then error('payload integrity check failed') end;local fn,err=load(CONCAT(O),nil,Q);if not fn then error(err) end;return fn() end)(" .. args .. ")"
     if variant == "linear" then
         return table.concat({
             prefix,
-            "local CH,CONCAT=string.char,table.concat;local O={};local h=2166136261;local s=K;local pos=0;local pc=H;",
+            "local pc=H;",
             "while pc~=0 do local ins=I[pc];if not ins then error('invalid instruction') end;",
             "local op,index=ins[1],ins[2];",
             "if op==Z then break elseif op==A then local data=P[index];if not data then error('missing block') end;",
-            "for j=1,#data do pos=pos+1;s=(s*M+N)&0xFFFFFFFF;local c=data[j];",
-            "local x=(c~((s>>16)&255)~((s>>7)&255)~(pos&255))&255;",
-            "O[pos]=CH(x);h=((h~x)*16777619)&0xFFFFFFFF;",
-            "s=(s~(c*257+pos))&0xFFFFFFFF;end;",
+            "for j=1,#data do step(data[j]) end;",
             "elseif op~=B then error('invalid opcode') end;pc=ins[3];end;",
             suffix
         })
@@ -170,18 +192,18 @@ local function makeLoader(blocks, instructions, entry, opChunk, opNoise, opEnd, 
     if variant == "state" then
         return table.concat({
             prefix,
-            "local CH,CONCAT=string.char,table.concat;local O={};local h=2166136261;local s=K;local pos=0;local pc=H;local done=false;",
+            "local pc=H;local done=false;",
             "while not done do local ins=I[pc];if not ins then error('invalid instruction') end;local op,index=ins[1],ins[2];",
             "if op==Z then done=true elseif op==A then local data=P[index];if not data then error('missing block') end;",
-            "for j,c in ipairs(data) do pos=pos+1;s=(s*M+N)&0xFFFFFFFF;local x=(c~((s>>16)&255)~((s>>7)&255)~(pos&255))&0xFF;O[pos]=CH(x);h=((h~x)*16777619)&0xFFFFFFFF;s=(s~(c*257+pos))&0xFFFFFFFF;end;pc=ins[3];",
+            "for j=1,#data do step(data[j]) end;pc=ins[3];",
             "elseif op==B then pc=ins[3];else error('invalid opcode') end;end;",
             suffix
         })
     end
     return table.concat({
         prefix,
-        "local CH,CONCAT=string.char,table.concat;local O={};local h=2166136261;local s=K;local pos=0;local pc=H;",
-        "local function chunk(index)local data=P[index];if not data then error('missing block') end;for j=1,#data do pos=pos+1;s=(s*M+N)&0xFFFFFFFF;local c=data[j];local x=(c~((s>>16)&255)~((s>>7)&255)~(pos&255))&255;O[pos]=CH(x);h=((h~x)*16777619)&0xFFFFFFFF;s=(s~(c*257+pos))&0xFFFFFFFF end end;",
+        "local pc=H;",
+        "local function chunk(index)local data=P[index];if not data then error('missing block') end;for j=1,#data do step(data[j]) end end;",
         "local handlers={[A]=function(index)chunk(index)end,[B]=function()end,[Z]=function()end};",
         "while true do local ins=I[pc];if not ins then error('invalid instruction') end;local handler=handlers[ins[1]];if not handler then error('invalid opcode') end;handler(ins[2]);if ins[1]==Z then break end;pc=ins[3] end;",
         suffix

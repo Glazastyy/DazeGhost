@@ -5,12 +5,12 @@ Lua 5.4 minifier and obfuscator. Pipeline: lex → parse → bind → transform 
 ## What it does
 
 - **minify**: parse Lua 5.4, drop comments and extra whitespace, reprint a compact equivalent program
-- **obfuscate**: minify, rename locals / parameters / loop variables to `_1`, `_2`, …, rewrite string literals as decimal escapes, compile with `string.dump`, then encrypt the bytecode with a rolling key
+- **obfuscate**: transform the source, compile it when requested, protect the payload with a keyed ARX stream mixer and integrity check, and select a diversified runtime dispatcher per build
 - **`--anti-ia`**: with obfuscate, also emit unused restore helpers and notes that look like the real decoder (wrong key schedule, text mode instead of bytecode). The running program does not call them
 
 Globals, table keys written as `name =`, and method names are left alone.
 
-This will not stop someone who extracts the live loader and the key from the file. It is meant to make casual reading and automated reconstruction expensive.
+The loader distributes the key material as split shares and reconstructs it only inside the runtime, but this is obfuscation rather than secret storage. A self-contained loader cannot hide a secret from an analyst who can execute it. Sensitive decisions should remain server-side.
 
 ## Requirements
 
@@ -46,6 +46,7 @@ cmake -B build -S .
 cmake --build build
 ./build/dazeghost --minify file.lua
 ./build/dazeghost --obfuscate --anti-ia -o out.lua file.lua
+./build/dazeghost --obfuscate --anti-ia --rounds 3 --density 70 --runtime auto -o out.lua file.lua
 ```
 
 The binary looks for `src/parser.lua` next to the executable, one directory up, in `$DAZEGHOST_ROOT`, or in the current working directory.
@@ -80,12 +81,12 @@ Minificador e ofuscador de Lua 5.4. Pipeline: lex → parse → bind → transfo
 ## O que faz
 
 - **minify**: parseia Lua 5.4, tira comentários e espaço extra, reimprime o programa compacto
-- **obfuscate**: minifica, troca locais / parâmetros / variáveis de loop por `_1`, `_2`, …, reescreve strings como escapes decimais, compila com `string.dump` e cifra o bytecode com uma chave rolante
+- **obfuscate**: transforma o código, compila quando solicitado, protege o payload com uma mistura ARX dependente de chave e verificação de integridade, e escolhe um dispatcher de runtime diversificado por build
 - **`--anti-ia`**: no obfuscate, também emite helpers e notas de restore que parecem o decoder de verdade (agenda de chave errada, modo texto em vez de bytecode). O programa que roda não chama isso
 
 Globais, chaves de tabela no estilo `nome =` e nomes de método ficam.
 
-Isso não para quem extrair o loader ao vivo e a chave do arquivo. Serve pra deixar leitura casual e reconstrução automática cara.
+O loader distribui o material da chave em shares e só o recompõe durante a execução, mas isso é ofuscação, não armazenamento secreto. Um loader autocontido não consegue esconder um segredo de quem pode executá-lo. Decisões sensíveis devem permanecer no servidor.
 
 ## Requisitos
 
@@ -121,6 +122,7 @@ cmake -B build -S .
 cmake --build build
 ./build/dazeghost --minify arquivo.lua
 ./build/dazeghost --obfuscate --anti-ia -o saida.lua arquivo.lua
+./build/dazeghost --obfuscate --anti-ia --rounds 3 --density 70 --runtime auto -o saida.lua arquivo.lua
 ```
 
 O binário procura `src/parser.lua` ao lado do executável, um diretório acima, em `$DAZEGHOST_ROOT` ou no diretório atual.
