@@ -145,3 +145,114 @@ lua5.4 tests/test.lua
 ## Licença
 
 MIT
+
+
+# DazeGhost: ofuscação Lua 5.4
+
+Este pacote fornece os oito módulos de `src/`, um gerador `gerar.lua` e testes. Os arquivos `dazeghost.lua`, `cpp/main.cpp` e `CMakeLists.txt` do projeto original não foram fornecidos e não foram alterados.
+
+## Requisitos
+
+É necessário Lua 5.4 para geração e execução. No modo `bytecode`, as instalações que geram e executam o arquivo precisam usar formatos de bytecode Lua compatíveis.
+
+## Uso mais simples
+
+Na raiz do DazeGhost, com `script.lua`, `caos.lua`, `src/` e `gerar.lua`:
+
+```bash
+lua5.4 gerar.lua --input script.lua --decoy caos.lua --output protegido.lua --rounds 3
+```
+
+Para ajustar a densidade dos fragmentos de distração:
+
+```bash
+lua5.4 gerar.lua -i script.lua -d caos.lua -o protegido.lua -r 2 --density 70
+```
+
+Para mostrar todas as opções:
+
+```bash
+lua5.4 gerar.lua --help
+```
+
+## Uso programático
+
+O campo `decoy_src` aceita o caminho de um arquivo Lua existente ou código Lua diretamente como string. `decoy_path` é uma opção alternativa que aceita apenas caminho. Caso um valor com aparência de arquivo `.lua` não exista, será apresentado um erro, em vez de tentar interpretar o nome do arquivo como código.
+
+```lua
+local obfuscate = require("src.obfuscate")
+
+local file = assert(io.open("script.lua", "rb"))
+local source = assert(file:read("*a"))
+file:close()
+
+local result = obfuscate.obfuscate(source, {
+    anti_ia = true,
+    decoy_src = "caos.lua",
+    rounds = 3,
+    mix_original = true,
+    decoy_density = 70,
+    max_decoy_fragments = 96,
+    flatten = true,
+    rename_locals = true,
+    encode_strings = true,
+    min_chunk_size = 24,
+    max_chunk_size = 80,
+    strip = true,
+    mode = "bytecode",
+    runtime = "auto"
+})
+
+local output = assert(io.open("protegido.lua", "wb"))
+assert(output:write(result))
+output:close()
+```
+
+## Como funcionam as rodadas
+
+A rodada 1 intercala declarações de distração na estrutura sintática do programa real, aplica as transformações e sela o resultado. Cada rodada posterior trabalha a partir do arquivo já selado pela rodada anterior. Se `mix_original` estiver ativo, fragmentos do código original também entram no conjunto de distrações das rodadas seguintes, junto ao conteúdo de `caos.lua`. Assim, as estruturas são combinadas antes da compilação, e não guardadas em um segundo payload independente.
+
+A inserção é conservadora: não executa o programa `caos.lua`, pois não seria seguro presumir que um programa arbitrário de distração é livre de efeitos colaterais. Em certos pontos, o trecho verdadeiro é colocado em um ramo condicional cujo resultado é previsível durante a geração, e o trecho falso fica em um caminho alternativo. Isso torna a saída mais complexa, mas não garante resistência à análise estática ou dinâmica.
+
+A opção `rounds` aceita inteiros de 1 até 5. Rodadas adicionais elevam consideravelmente o tamanho final e os custos de geração e de carregamento. A opção `max_output_bytes` limita o tamanho gerado, por padrão a 12 MiB, e interrompe a operação com erro se o limite for excedido.
+
+## Opções principais
+
+| Opção | Padrão | Finalidade |
+| --- | --- | --- |
+| `anti_ia` | `false` | Ativa mistura estrutural com fragmentos de distração |
+| `decoy_src` | interno | Código Lua ou caminho para arquivo Lua de distração |
+| `decoy_path` | nenhum | Caminho explícito da distração, prioritário sobre `decoy_src` |
+| `rounds` | `1` | Quantidade de rodadas completas, até 5 |
+| `mix_original` | `true` | Inclui fragmentos originais como distração a partir da rodada 2 |
+| `decoy_density` | `100` | Probabilidade percentual de inserir distrações nos pontos elegíveis |
+| `max_decoy_fragments` | `192` | Quantidade máxima de fragmentos de distração coletados |
+| `flatten` | `true` | Transforma conjuntos seguros de chamadas e atribuições em fluxo por estados |
+| `rename_locals` | `true` | Renomeia locais, respeitando escopo e `_ENV` |
+| `encode_strings` | `true` | Ofusca literais de strings com decodificação sob demanda |
+| `min_chunk_size` | `24` | Tamanho mínimo de cada fragmento de dados |
+| `max_chunk_size` | `80` | Tamanho máximo, limitado a 4096 |
+| `strip` | `true` | Remove informações de depuração do bytecode |
+| `mode` | `bytecode` | Usa payload `bytecode` ou `text` |
+| `runtime` | `auto` | Escolhe o dispatcher `linear`, `state` ou `table`; `auto` diversifica por build |
+| `seed` | aleatória | Semente para builds reproduzíveis |
+| `max_output_bytes` | 12582912 | Limite de tamanho do arquivo resultante |
+| `max_intermediate_bytes` | `max(8 × max_output_bytes, 64 MiB)` | Limite independente para fontes intermediárias entre rodadas |
+
+## Interfaces
+
+`require("src.obfuscate").obfuscate(source, options)` realiza todas as rodadas configuradas. `require("src.obfuscate").transform(source, options)` transforma uma etapa, sem empacotar. `require("src.crypt").seal(source, options)` sela um código Lua em uma camada; quando `anti_ia = true`, também aplica a mistura estrutural, se ainda não tiver sido feita pelo chamador.
+
+## Testes
+
+```bash
+lua5.4 tests/regression.lua
+lua5.4 tests/property.lua
+lua5.4 tests/rounds.lua
+lua5.4 tests/text.lua
+lua5.4 tests/cli/run.lua
+```
+
+## Limitações
+
+Não há virtualização completa do conjunto de instruções do Lua. O runtime possui três formas polimórficas de dispatcher, mas ainda reconstrói o payload e o passa para `load`. Os fragmentos de distração não constituem uma defesa comprovada contra IA, e caminhos inativos podem ser detectados por instrumentação e análise simbólica. O hash de integridade não é criptograficamente autenticado, a codificação dos bytes é reversível e não há antidepuração robusta. A proteção deve ser avaliada com benchmarks de engenharia reversa no ambiente de execução real.

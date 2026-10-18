@@ -44,16 +44,32 @@ local function readLongBracket(src, i)
 end
 
 local function readString(src, i)
-    local q = peek(src, i)
+    local quote = src:sub(i, i)
     local j = i + 1
     local n = #src
     while j <= n do
-        local c = peek(src, j)
-        if c == "\\" then
-            j = j + 2
-        elseif c == q then
+        local c = src:sub(j, j)
+        if c == quote then
             return src:sub(i, j), j + 1
-        elseif c == "\n" then
+        end
+        if c == "\\" then
+            local nextc = src:sub(j + 1, j + 1)
+            if nextc == "" then
+                return nil, "unfinished string"
+            end
+            if nextc == "z" then
+                j = j + 2
+                while j <= n and src:sub(j, j):match("%s") do
+                    j = j + 1
+                end
+            elseif nextc == "\r" and src:sub(j + 2, j + 2) == "\n" then
+                j = j + 3
+            elseif nextc == "\n" and src:sub(j + 2, j + 2) == "\r" then
+                j = j + 3
+            else
+                j = j + 2
+            end
+        elseif c == "\n" or c == "\r" then
             return nil, "unfinished string"
         else
             j = j + 1
@@ -63,23 +79,44 @@ local function readString(src, i)
 end
 
 local function readNumber(src, i)
-    local s = src:sub(i)
-    local num = s:match("^0[xX][%da-fA-F]*[pP][%+%-]?%d+")
-        or s:match("^0[xX][%da-fA-F]+%.[%da-fA-F]*[pP][%+%-]?%d+")
-        or s:match("^0[xX]%.[%da-fA-F]+[pP][%+%-]?%d+")
-        or s:match("^0[xX][%da-fA-F]+%.[%da-fA-F]*")
-        or s:match("^0[xX]%.[%da-fA-F]+")
-        or s:match("^0[xX][%da-fA-F]+")
-        or s:match("^%d+%.%d*[eE][%+%-]?%d+")
-        or s:match("^%d+[eE][%+%-]?%d+")
-        or s:match("^%.%d+[eE][%+%-]?%d+")
-        or s:match("^%d+%.%d*")
-        or s:match("^%.%d+")
-        or s:match("^%d+")
-    if not num or num == "0x" or num == "0X" then
+    local n = #src
+    local j = i
+    local hexadecimal = src:sub(i, i + 1):lower() == "0x"
+    if hexadecimal then
+        j = j + 2
+    end
+    local pattern = hexadecimal and "[%da-fA-F]" or "%d"
+    local digits = 0
+    while j <= n and src:sub(j, j):match(pattern) do
+        j = j + 1
+        digits = digits + 1
+    end
+    if src:sub(j, j) == "." and src:sub(j + 1, j + 1) ~= "." then
+        j = j + 1
+        while j <= n and src:sub(j, j):match(pattern) do
+            j = j + 1
+            digits = digits + 1
+        end
+    end
+    if digits == 0 then
         return nil
     end
-    return num, i + #num
+    local marker = src:sub(j, j)
+    if (hexadecimal and (marker == "p" or marker == "P")) or (not hexadecimal and (marker == "e" or marker == "E")) then
+        j = j + 1
+        local sign = src:sub(j, j)
+        if sign == "+" or sign == "-" then
+            j = j + 1
+        end
+        local start = j
+        while j <= n and src:sub(j, j):match("%d") do
+            j = j + 1
+        end
+        if j == start then
+            return nil
+        end
+    end
+    return src:sub(i, j - 1), j
 end
 
 local function readOp(src, i)
@@ -97,15 +134,19 @@ end
 
 function M.lex(src)
     local tokens = {}
-    local i = 1
+    local i = src:sub(1, 3) == "\239\187\191" and 4 or 1
     local n = #src
     local line, col = 1, 1
 
     local function adv(to)
         while i < to do
-            if peek(src, i) == "\n" then
+            local c = peek(src, i)
+            if c == "\r" or c == "\n" then
                 line = line + 1
                 col = 1
+                if c == "\r" and peek(src, i + 1) == "\n" and i + 1 < to then
+                    i = i + 1
+                end
             else
                 col = col + 1
             end

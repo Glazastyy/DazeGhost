@@ -93,19 +93,22 @@ local function parse(src)
     end
 
     local function parseParlist()
+        local names = {}
+        local vararg = false
         if try("punct", "...") then
-            return { vararg = true, names = {} }
+            return { vararg = true, names = names }
         end
         if at("ident") then
-            local names = parseNamelist()
-            local vararg = false
-            if try("punct", ",") then
-                consume("punct", "...")
-                vararg = true
+            names[#names + 1] = parseName()
+            while try("punct", ",") do
+                if try("punct", "...") then
+                    vararg = true
+                    break
+                end
+                names[#names + 1] = parseName()
             end
-            return { vararg = vararg, names = names }
         end
-        return { vararg = false, names = {} }
+        return { vararg = vararg, names = names }
     end
 
     local function parseField()

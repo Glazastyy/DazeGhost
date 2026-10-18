@@ -1,11 +1,11 @@
 local M = {}
 
-local function needsSpace(prev, nexts)
-    if not prev or prev == "" or not nexts or nexts == "" then
+local function needsSpace(previous, current)
+    if previous == "" or current == "" then
         return false
     end
-    local a = prev:sub(-1)
-    local b = nexts:sub(1, 1)
+    local a = previous:sub(-1)
+    local b = current:sub(1, 1)
     if a:match("[%w_]") and b:match("[%w_]") then
         return true
     end
@@ -18,259 +18,259 @@ local function needsSpace(prev, nexts)
     if a == "." and b == "." then
         return true
     end
+    if a:match("%d") and b == "." then
+        return true
+    end
     if a == "<" and (b == "=" or b == "<") then
         return true
     end
     if a == ">" and (b == "=" or b == ">") then
         return true
     end
-    if a == "=" and b == "=" then
+    if (a == "=" or a == "~") and b == "=" then
         return true
     end
-    if a == "~" and b == "=" then
+    if a == ":" and b == ":" then
         return true
-    end
-    if a:match("%d") and b == "." then
-        if not prev:match("[%a_]") then
-            return true
-        end
     end
     return false
 end
 
-local buf
-local emitExp, emitBlock, emitStat
-
-local function emit(s)
-    if s == "" then
-        return
-    end
-    if needsSpace(buf[#buf], s) then
-        buf[#buf + 1] = " "
-    end
-    buf[#buf + 1] = s
-end
-
-local function emitList(list, sep)
-    for i, item in ipairs(list) do
-        if i > 1 then
-            emit(sep)
-        end
-        emitExp(item)
-    end
-end
-
-local function emitNames(names)
-    for i, n in ipairs(names) do
-        if i > 1 then
-            emit(",")
-        end
-        emit(n.emit or n.value)
-        if n.attr then
-            emit("<")
-            emit(n.attr)
-            emit(">")
-        end
-    end
-end
-
-local function emitParams(body)
-    emit("(")
-    if body.method then
-        local selfn = body.selfName
-        emit((selfn and (selfn.emit or selfn.value)) or "self")
-        if #body.params.names > 0 then
-            emit(",")
-        end
-    end
-    emitNames(body.params.names)
-    if body.params.vararg then
-        if #body.params.names > 0 or body.method then
-            emit(",")
-        end
-        emit("...")
-    end
-    emit(")")
-    emitBlock(body.body)
-    emit("end")
-end
-
-emitExp = function(node)
-    local tag = node.tag
-    if tag == "nil" then
-        emit("nil")
-    elseif tag == "boolean" then
-        emit(node.value and "true" or "false")
-    elseif tag == "number" or tag == "string" then
-        emit(node.value)
-    elseif tag == "vararg" then
-        emit("...")
-    elseif tag == "name" then
-        emit(node.emit or node.value)
-    elseif tag == "unop" then
-        emit(node.op)
-        emitExp(node.exp)
-    elseif tag == "binop" then
-        emitExp(node.left)
-        emit(node.op)
-        emitExp(node.right)
-    elseif tag == "paren" then
-        emit("(")
-        emitExp(node.exp)
-        emit(")")
-    elseif tag == "table" then
-        emit("{")
-        for i, f in ipairs(node.fields) do
-            if i > 1 then
-                emit(",")
-            end
-            if f.tag == "indexfield" then
-                emit("[")
-                emitExp(f.key)
-                emit("]")
-                emit("=")
-                emitExp(f.value)
-            elseif f.tag == "namefield" then
-                emit(f.name.value)
-                emit("=")
-                emitExp(f.value)
-            else
-                emitExp(f.value)
-            end
-        end
-        emit("}")
-    elseif tag == "funcbody" then
-        emit("function")
-        emitParams(node)
-    elseif tag == "field" then
-        emitExp(node.object)
-        emit(".")
-        emit(node.name.value)
-    elseif tag == "index" then
-        emitExp(node.object)
-        emit("[")
-        emitExp(node.index)
-        emit("]")
-    elseif tag == "call" then
-        emitExp(node.callee)
-        emit("(")
-        emitList(node.args, ",")
-        emit(")")
-    elseif tag == "mcall" then
-        emitExp(node.object)
-        emit(":")
-        emit(node.name.value)
-        emit("(")
-        emitList(node.args, ",")
-        emit(")")
-    else
-        error("emit exp " .. tostring(tag))
-    end
-end
-
-emitStat = function(st)
-    local tag = st.tag
-    if tag == "empty" then
-        emit(";")
-    elseif tag == "break" then
-        emit("break")
-    elseif tag == "goto" then
-        emit("goto")
-        emit(st.name.value)
-    elseif tag == "label" then
-        emit("::")
-        emit(st.name.value)
-        emit("::")
-    elseif tag == "do" then
-        emit("do")
-        emitBlock(st.body)
-        emit("end")
-    elseif tag == "while" then
-        emit("while")
-        emitExp(st.cond)
-        emit("do")
-        emitBlock(st.body)
-        emit("end")
-    elseif tag == "repeat" then
-        emit("repeat")
-        emitBlock(st.body)
-        emit("until")
-        emitExp(st.cond)
-    elseif tag == "if" then
-        for i, c in ipairs(st.clauses) do
-            emit(i == 1 and "if" or "elseif")
-            emitExp(c.cond)
-            emit("then")
-            emitBlock(c.body)
-        end
-        if st.els then
-            emit("else")
-            emitBlock(st.els)
-        end
-        emit("end")
-    elseif tag == "fornum" then
-        emit("for")
-        emit(st.name.emit or st.name.value)
-        emit("=")
-        emitExp(st.from)
-        emit(",")
-        emitExp(st.to)
-        if st.step then
-            emit(",")
-            emitExp(st.step)
-        end
-        emit("do")
-        emitBlock(st.body)
-        emit("end")
-    elseif tag == "forin" then
-        emit("for")
-        emitNames(st.names)
-        emit("in")
-        emitList(st.explist, ",")
-        emit("do")
-        emitBlock(st.body)
-        emit("end")
-    elseif tag == "functionstat" then
-        emit("function")
-        emitExp(st.name)
-        emitParams(st.body)
-    elseif tag == "localfunction" then
-        emit("local function")
-        emit(st.name.emit or st.name.value)
-        emitParams(st.body)
-    elseif tag == "local" then
-        emit("local")
-        emitNames(st.names)
-        if st.values then
-            emit("=")
-            emitList(st.values, ",")
-        end
-    elseif tag == "assign" then
-        emitList(st.vars, ",")
-        emit("=")
-        emitList(st.values, ",")
-    elseif tag == "callstat" then
-        emitExp(st.call)
-    elseif tag == "return" then
-        emit("return")
-        if st.explist then
-            emitList(st.explist, ",")
-        end
-    else
-        error("emit stat " .. tostring(tag))
-    end
-end
-
-emitBlock = function(block)
-    for _, st in ipairs(block.stats) do
-        emitStat(st)
-    end
-end
-
 function M.emit(ast)
-    buf = {}
-    emitBlock(ast)
-    return table.concat(buf)
+    local chunks = {}
+    local previous = ""
+    local expression
+    local block
+    local statement
+
+    local function put(value)
+        if value == "" then
+            return
+        end
+        if needsSpace(previous, value) then
+            chunks[#chunks + 1] = " "
+        end
+        chunks[#chunks + 1] = value
+        previous = value
+    end
+
+    local function list(items)
+        for i, item in ipairs(items) do
+            if i > 1 then
+                put(",")
+            end
+            expression(item)
+        end
+    end
+
+    local function names(items)
+        for i, item in ipairs(items) do
+            if i > 1 then
+                put(",")
+            end
+            put(item.emit or item.value)
+            if item.attr then
+                put("<")
+                put(item.attr)
+                put(">")
+            end
+        end
+    end
+
+    local function params(body)
+        put("(")
+        names(body.params.names)
+        if body.params.vararg then
+            if #body.params.names > 0 then
+                put(",")
+            end
+            put("...")
+        end
+        put(")")
+        block(body.body)
+        put("end")
+    end
+
+    expression = function(node)
+        local tag = node.tag
+        if tag == "nil" then
+            put("nil")
+        elseif tag == "boolean" then
+            put(node.value and "true" or "false")
+        elseif tag == "number" or tag == "string" then
+            put(node.value)
+        elseif tag == "vararg" then
+            put("...")
+        elseif tag == "name" then
+            put(node.emit or node.value)
+        elseif tag == "unop" then
+            put(node.op)
+            expression(node.exp)
+        elseif tag == "binop" then
+            expression(node.left)
+            put(node.op)
+            expression(node.right)
+        elseif tag == "paren" then
+            put("(")
+            expression(node.exp)
+            put(")")
+        elseif tag == "table" then
+            put("{")
+            for i, field in ipairs(node.fields) do
+                if i > 1 then
+                    put(",")
+                end
+                if field.tag == "indexfield" then
+                    put("[")
+                    expression(field.key)
+                    put("]")
+                    put("=")
+                elseif field.tag == "namefield" then
+                    put(field.name.value)
+                    put("=")
+                end
+                expression(field.value)
+            end
+            put("}")
+        elseif tag == "funcbody" then
+            put("function")
+            params(node)
+        elseif tag == "field" then
+            expression(node.object)
+            put(".")
+            put(node.name.value)
+        elseif tag == "index" then
+            expression(node.object)
+            put("[")
+            expression(node.index)
+            put("]")
+        elseif tag == "call" then
+            expression(node.callee)
+            put("(")
+            list(node.args)
+            put(")")
+        elseif tag == "mcall" then
+            expression(node.object)
+            put(":")
+            put(node.name.value)
+            put("(")
+            list(node.args)
+            put(")")
+        else
+            error("unsupported expression: " .. tostring(tag))
+        end
+    end
+
+    statement = function(st)
+        local tag = st.tag
+        if tag == "empty" then
+            put(";")
+        elseif tag == "break" then
+            put("break")
+        elseif tag == "goto" then
+            put("goto")
+            put(st.name.value)
+        elseif tag == "label" then
+            put("::")
+            put(st.name.value)
+            put("::")
+        elseif tag == "do" then
+            put("do")
+            block(st.body)
+            put("end")
+        elseif tag == "while" then
+            put("while")
+            expression(st.cond)
+            put("do")
+            block(st.body)
+            put("end")
+        elseif tag == "repeat" then
+            put("repeat")
+            block(st.body)
+            put("until")
+            expression(st.cond)
+        elseif tag == "if" then
+            for i, clause in ipairs(st.clauses) do
+                put(i == 1 and "if" or "elseif")
+                expression(clause.cond)
+                put("then")
+                block(clause.body)
+            end
+            if st.els then
+                put("else")
+                block(st.els)
+            end
+            put("end")
+        elseif tag == "fornum" then
+            put("for")
+            put(st.name.emit or st.name.value)
+            put("=")
+            expression(st.from)
+            put(",")
+            expression(st.to)
+            if st.step then
+                put(",")
+                expression(st.step)
+            end
+            put("do")
+            block(st.body)
+            put("end")
+        elseif tag == "forin" then
+            put("for")
+            names(st.names)
+            put("in")
+            list(st.explist)
+            put("do")
+            block(st.body)
+            put("end")
+        elseif tag == "functionstat" then
+            put("function")
+            if st.body.method then
+                expression(st.name.object)
+                put(":")
+                put(st.name.name.value)
+            else
+                expression(st.name)
+            end
+            params(st.body)
+        elseif tag == "localfunction" then
+            put("local function")
+            put(st.name.emit or st.name.value)
+            params(st.body)
+        elseif tag == "local" then
+            put("local")
+            names(st.names)
+            if st.values then
+                put("=")
+                list(st.values)
+            end
+        elseif tag == "assign" then
+            list(st.vars)
+            put("=")
+            list(st.values)
+        elseif tag == "callstat" then
+            expression(st.call)
+        elseif tag == "return" then
+            put("return")
+            if st.explist then
+                list(st.explist)
+            end
+        else
+            error("unsupported statement: " .. tostring(tag))
+        end
+    end
+
+    block = function(node)
+        for i, st in ipairs(node.stats) do
+            if i > 1 then
+                put(";")
+            end
+            statement(st)
+        end
+    end
+
+    block(ast)
+    return table.concat(chunks)
 end
 
 return M

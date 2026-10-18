@@ -1,166 +1,304 @@
 #include <lua.hpp>
 
+#include <charconv>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace fs = std::filesystem;
 
-static void usage() {
-    std::cerr << "usage: dazeghost [--minify|--obfuscate] [--anti-ia] [-o out.lua] file.lua\n";
+struct Options {
+    std::string mode = "obfuscate";
+    std::string runtime = "auto";
+    std::string input;
+    std::string decoy = "caos.lua";
+    std::string output;
+    std::uint32_t rounds = 1;
+    std::uint32_t density = 100;
+    std::uint32_t seed = 0;
+    bool has_seed = false;
+    std::uint32_t min_chunk_size = 24;
+    std::uint32_t max_chunk_size = 80;
+    std::uint64_t max_output_bytes = 12ULL * 1024ULL * 1024ULL;
+    std::uint64_t max_intermediate_bytes = 0;
+    bool mix_original = true;
+    bool flatten = true;
+    bool encode_strings = true;
+};
+
+static void usage(std::ostream& out) {
+    out << "usage: dazeghost [options] file.lua\n"
+        << "  --minify | --obfuscate\n"
+        << "  --anti-ia\n"
+        << "  -i, --input FILE\n"
+        << "  -d, --decoy FILE\n"
+        << "  -o, --output FILE\n"
+        << "  -r, --rounds N\n"
+        << "  --density N\n"
+        << "  --mode bytecode|text\n"
+        << "  --runtime auto|linear|state|table\n"
+        << "  --seed N\n"
+        << "  --min-chunk-size N --max-chunk-size N\n"
+        << "  --max-output-bytes N --max-intermediate-bytes N\n"
+        << "  --no-mix-original --no-flatten --no-encode-strings\n";
+}
+
+static bool parse_unsigned(const std::string& text, std::uint64_t& value) {
+    if (text.empty() || text.front() == '-') return false;
+    const char* first = text.data();
+    const char* last = first + text.size();
+    const auto result = std::from_chars(first, last, value);
+    return result.ec == std::errc{} && result.ptr == last;
+}
+
+static bool next_value(int& index, int argc, char** argv, std::string& value) {
+    if (index + 1 >= argc) return false;
+    value = argv[++index];
+    return !value.empty();
+}
+
+static bool assign_unsigned(const std::string& text, std::uint64_t maximum, std::uint64_t& destination) {
+    std::uint64_t value = 0;
+    if (!parse_unsigned(text, value) || value > maximum) return false;
+    destination = value;
+    return true;
+}
+
+static bool parse_arguments(int argc, char** argv, Options& options, bool& anti_ia) {
+    for (int index = 1; index < argc; ++index) {
+        const std::string argument = argv[index];
+        if (argument == "-h" || argument == "--help") {
+            usage(std::cout);
+            return false;
+        }
+        if (argument == "--minify" || argument == "--obfuscate") {
+            options.mode = argument == "--minify" ? "minify" : "obfuscate";
+            continue;
+        }
+        if (argument == "--anti-ia") {
+            anti_ia = true;
+            continue;
+        }
+        if (argument == "--no-mix-original") {
+            options.mix_original = false;
+            continue;
+        }
+        if (argument == "--no-flatten") {
+            options.flatten = false;
+            continue;
+        }
+        if (argument == "--no-encode-strings") {
+            options.encode_strings = false;
+            continue;
+        }
+        std::string value;
+        if (argument == "-i" || argument == "--input") {
+            if (!next_value(index, argc, argv, value)) return false;
+            options.input = value;
+            continue;
+        }
+        if (argument == "-d" || argument == "--decoy") {
+            if (!next_value(index, argc, argv, value)) return false;
+            options.decoy = value;
+            continue;
+        }
+        if (argument == "-o" || argument == "--output") {
+            if (!next_value(index, argc, argv, value)) return false;
+            options.output = value;
+            continue;
+        }
+        if (argument == "-r" || argument == "--rounds") {
+            std::uint64_t parsed = 0;
+            if (!next_value(index, argc, argv, value) || !assign_unsigned(value, 5, parsed) || parsed < 1) return false;
+            options.rounds = static_cast<std::uint32_t>(parsed);
+            continue;
+        }
+        if (argument == "--density") {
+            std::uint64_t parsed = 0;
+            if (!next_value(index, argc, argv, value) || !assign_unsigned(value, 100, parsed) || parsed < 1) return false;
+            options.density = static_cast<std::uint32_t>(parsed);
+            continue;
+        }
+        if (argument == "--seed") {
+            std::uint64_t parsed = 0;
+            if (!next_value(index, argc, argv, value) || !assign_unsigned(value, 0xFFFFFFFFULL, parsed)) return false;
+            options.seed = static_cast<std::uint32_t>(parsed);
+            options.has_seed = true;
+            continue;
+        }
+        if (argument == "--min-chunk-size" || argument == "--max-chunk-size") {
+            std::uint64_t parsed = 0;
+            if (!next_value(index, argc, argv, value) || !assign_unsigned(value, 4096, parsed) || parsed < 1) return false;
+            if (argument == "--min-chunk-size") options.min_chunk_size = static_cast<std::uint32_t>(parsed);
+            else options.max_chunk_size = static_cast<std::uint32_t>(parsed);
+            continue;
+        }
+        if (argument == "--max-output-bytes" || argument == "--max-intermediate-bytes") {
+            std::uint64_t parsed = 0;
+            if (!next_value(index, argc, argv, value) || !assign_unsigned(value, 0x7FFFFFFFFFFFFFFFULL, parsed) || parsed < 1024) return false;
+            if (argument == "--max-output-bytes") options.max_output_bytes = parsed;
+            else options.max_intermediate_bytes = parsed;
+            continue;
+        }
+        if (argument == "--mode") {
+            if (!next_value(index, argc, argv, value) || (value != "bytecode" && value != "text")) return false;
+            options.mode = value;
+            continue;
+        }
+        if (argument == "--runtime") {
+            if (!next_value(index, argc, argv, value) || (value != "auto" && value != "linear" && value != "state" && value != "table")) return false;
+            options.runtime = value;
+            continue;
+        }
+        if (!argument.empty() && argument.front() == '-') return false;
+        if (!options.input.empty()) return false;
+        options.input = argument;
+    }
+    return !options.input.empty();
 }
 
 static std::string slurp(const fs::path& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        return {};
-    }
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return {};
+    std::ostringstream content;
+    content << input.rdbuf();
+    return content.str();
 }
 
 static fs::path find_root(const fs::path& argv0) {
     std::vector<fs::path> candidates;
-    std::error_code ec;
-    if (const char* env = std::getenv("DAZEGHOST_ROOT")) {
-        candidates.emplace_back(env);
-    }
-    fs::path exe = fs::absolute(argv0, ec);
-    if (!ec) {
-        candidates.push_back(exe.parent_path());
-        candidates.push_back(exe.parent_path().parent_path());
+    std::error_code error;
+    if (const char* environment = std::getenv("DAZEGHOST_ROOT")) candidates.emplace_back(environment);
+    const fs::path executable = fs::absolute(argv0, error);
+    if (!error) {
+        candidates.push_back(executable.parent_path());
+        candidates.push_back(executable.parent_path().parent_path());
     }
     candidates.push_back(fs::current_path());
-    for (const auto& c : candidates) {
-        if (fs::exists(c / "src" / "parser.lua")) {
-            return c;
-        }
+    for (const auto& candidate : candidates) {
+        if (fs::exists(candidate / "src" / "parser.lua")) return candidate;
     }
     return fs::current_path();
 }
 
-int main(int argc, char** argv) {
-    std::string mode = "obfuscate";
-    bool anti_ia = false;
-    std::string input;
-    std::string output;
-    for (int i = 1; i < argc; ++i) {
-        std::string a = argv[i];
-        if (a == "-h" || a == "--help") {
-            usage();
-            return 0;
-        }
-        if (a == "--minify") {
-            mode = "minify";
-            continue;
-        }
-        if (a == "--obfuscate") {
-            mode = "obfuscate";
-            continue;
-        }
-        if (a == "--anti-ia") {
-            anti_ia = true;
-            continue;
-        }
-        if (a == "-o") {
-            if (i + 1 >= argc) {
-                usage();
-                return 2;
-            }
-            output = argv[++i];
-            continue;
-        }
-        if (!a.empty() && a[0] == '-') {
-            usage();
-            return 2;
-        }
-        if (!input.empty()) {
-            usage();
-            return 2;
-        }
-        input = a;
+static bool configure_package_path(lua_State* state, const fs::path& root) {
+    lua_getglobal(state, "package");
+    if (!lua_istable(state, -1)) {
+        lua_pop(state, 1);
+        return false;
     }
-    if (input.empty()) {
-        usage();
+    lua_getfield(state, -1, "path");
+    const char* current = lua_tostring(state, -1);
+    const std::string prefix = root.generic_string() + "/?.lua;" + root.generic_string() + "/?/init.lua;";
+    const std::string path = prefix + (current ? current : "");
+    lua_pop(state, 1);
+    lua_pushlstring(state, path.data(), path.size());
+    lua_setfield(state, -2, "path");
+    lua_pop(state, 1);
+    return true;
+}
+
+static void set_boolean(lua_State* state, const char* name, bool value) {
+    lua_pushboolean(state, value);
+    lua_setfield(state, -2, name);
+}
+
+static void set_integer(lua_State* state, const char* name, lua_Integer value) {
+    lua_pushinteger(state, value);
+    lua_setfield(state, -2, name);
+}
+
+static void set_string(lua_State* state, const char* name, const std::string& value) {
+    lua_pushlstring(state, value.data(), value.size());
+    lua_setfield(state, -2, name);
+}
+
+int main(int argc, char** argv) {
+    Options options;
+    bool anti_ia = false;
+    if (!parse_arguments(argc, argv, options, anti_ia)) {
+        usage(std::cerr);
         return 2;
     }
-
-    const std::string src = slurp(input);
-    if (src.empty() && !fs::exists(input)) {
-        std::cerr << "cannot read " << input << "\n";
+    const std::string source = slurp(options.input);
+    if (source.empty() && !fs::exists(options.input)) {
+        std::cerr << "cannot read input\n";
         return 1;
     }
-
-    lua_State* L = luaL_newstate();
-    if (!L) {
+    lua_State* state = luaL_newstate();
+    if (!state) {
         std::cerr << "lua state failed\n";
         return 1;
     }
-    luaL_openlibs(L);
-
-    const fs::path root = find_root(argv[0]);
-    std::string setpath = "package.path = [[" + root.generic_string()
-        + "/?.lua;" + root.generic_string() + "/?/init.lua;]] .. package.path";
-    if (luaL_dostring(L, setpath.c_str()) != LUA_OK) {
-        std::cerr << lua_tostring(L, -1) << "\n";
-        lua_close(L);
+    luaL_openlibs(state);
+    if (!configure_package_path(state, find_root(argv[0]))) {
+        std::cerr << "cannot configure Lua module path\n";
+        lua_close(state);
         return 1;
     }
-
-    const char* mod = (mode == "minify") ? "src.minify" : "src.obfuscate";
-    lua_getglobal(L, "require");
-    lua_pushstring(L, mod);
-    if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
-        std::cerr << lua_tostring(L, -1) << "\n";
-        lua_close(L);
+    lua_getglobal(state, "require");
+    lua_pushstring(state, options.mode == "minify" ? "src.minify" : "src.obfuscate");
+    if (lua_pcall(state, 1, 1, 0) != LUA_OK) {
+        std::cerr << lua_tostring(state, -1) << "\n";
+        lua_close(state);
         return 1;
     }
-    lua_getfield(L, -1, mode.c_str());
-    if (!lua_isfunction(L, -1)) {
-        std::cerr << "missing " << mode << "\n";
-        lua_close(L);
+    lua_getfield(state, -1, options.mode.c_str());
+    if (!lua_isfunction(state, -1)) {
+        std::cerr << "missing operation\n";
+        lua_close(state);
         return 1;
     }
-    lua_pushlstring(L, src.data(), src.size());
-    int nargs = 1;
-    if (mode == "obfuscate") {
-        lua_newtable(L);
-        lua_pushboolean(L, anti_ia ? 1 : 0);
-        lua_setfield(L, -2, "anti_ia");
-        nargs = 2;
+    lua_pushlstring(state, source.data(), source.size());
+    int arguments = 1;
+    if (options.mode == "obfuscate") {
+        lua_newtable(state);
+        set_boolean(state, "anti_ia", anti_ia);
+        set_string(state, "decoy_src", options.decoy);
+        set_integer(state, "rounds", options.rounds);
+        set_integer(state, "decoy_density", options.density);
+        set_string(state, "mode", "bytecode");
+        set_string(state, "runtime", options.runtime);
+        set_integer(state, "min_chunk_size", options.min_chunk_size);
+        set_integer(state, "max_chunk_size", options.max_chunk_size);
+        set_integer(state, "max_output_bytes", static_cast<lua_Integer>(options.max_output_bytes));
+        if (options.max_intermediate_bytes != 0) set_integer(state, "max_intermediate_bytes", static_cast<lua_Integer>(options.max_intermediate_bytes));
+        set_boolean(state, "mix_original", options.mix_original);
+        set_boolean(state, "flatten", options.flatten);
+        set_boolean(state, "encode_strings", options.encode_strings);
+        if (options.has_seed) set_integer(state, "seed", options.seed);
+        arguments = 2;
     }
-    if (lua_pcall(L, nargs, 1, 0) != LUA_OK) {
-        std::cerr << lua_tostring(L, -1) << "\n";
-        lua_close(L);
+    if (lua_pcall(state, arguments, 1, 0) != LUA_OK) {
+        const char* error = lua_tostring(state, -1);
+        std::cerr << (error ? error : "Lua operation failed") << "\n";
+        lua_close(state);
         return 1;
     }
-    size_t n = 0;
-    const char* out = lua_tolstring(L, -1, &n);
-    if (!out) {
-        std::cerr << "empty result\n";
-        lua_close(L);
+    size_t length = 0;
+    const char* output = lua_tolstring(state, -1, &length);
+    if (!output) {
+        std::cerr << "operation returned no text\n";
+        lua_close(state);
         return 1;
     }
-    std::string result(out, n);
-    if (result.empty() || result.back() != '\n') {
-        result.push_back('\n');
+    std::string result(output, length);
+    if (result.empty() || result.back() != '\n') result.push_back('\n');
+    lua_close(state);
+    if (options.output.empty()) {
+        std::cout.write(result.data(), static_cast<std::streamsize>(result.size()));
+        return std::cout ? 0 : 1;
     }
-    lua_close(L);
-
-    if (output.empty()) {
-        std::cout << result;
-        return 0;
-    }
-    std::ofstream w(output, std::ios::binary);
-    if (!w) {
-        std::cerr << "cannot write " << output << "\n";
+    std::ofstream file(options.output, std::ios::binary);
+    if (!file) {
+        std::cerr << "cannot write output\n";
         return 1;
     }
-    w << result;
-    return 0;
+    file.write(result.data(), static_cast<std::streamsize>(result.size()));
+    return file ? 0 : 1;
 }

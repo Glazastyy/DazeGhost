@@ -126,8 +126,7 @@ do
     ]]
     local out = obfuscate.obfuscate(src, { anti_ia = true })
     check("anti-ia load", exec(out) == 5, out)
-    check("anti-ia decoy present", out:find("restore_v1", 1, true) and out:find("restore_legacy", 1, true), out)
-    check("anti-ia decoy not called", not out:find("return restore_", 1, true))
+    check("anti-ia decoy source hidden", not out:find("restore_v1", 1, true) and not out:find("restore_legacy", 1, true), out)
 end
 
 print(failed == 0 and "all passed" or (failed .. " failed"))
