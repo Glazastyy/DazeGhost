@@ -12,6 +12,7 @@ local fn, err = load(loader, "=compressed", "t")
 assert(fn, err)
 assert(fn() == "stable payload")
 assert(loader == compress.wrap(source))
+assert(not loader:find("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", 1, true))
 
 local binary = string.char(0, 1, 2, 3, 255) .. string.rep("A", 300)
 assert(compress.unpack(compress.pack(binary)) == binary)

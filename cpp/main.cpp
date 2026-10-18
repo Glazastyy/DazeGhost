@@ -1,6 +1,7 @@
 #include <lua.hpp>
 
 #include <charconv>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -35,6 +36,34 @@ struct Options {
     bool encode_strings = true;
     bool compress = false;
 };
+
+struct StageContext {
+    fs::path prefix;
+};
+
+static int stage_writer(lua_State* state) {
+    auto* context = static_cast<StageContext*>(lua_touserdata(state, lua_upvalueindex(1)));
+    if (!context) return luaL_error(state, "stage context is unavailable");
+    size_t length = 0;
+    const char* data = luaL_checklstring(state, 1, &length);
+    const lua_Integer round = luaL_checkinteger(state, 2);
+    const fs::path path = context->prefix.string() + "." + std::to_string(round);
+    std::ofstream stage(path, std::ios::binary | std::ios::trunc);
+    if (!stage) return luaL_error(state, "cannot create stage file");
+    stage.write(data, static_cast<std::streamsize>(length));
+    stage.close();
+    if (!stage) return luaL_error(state, "cannot write stage file");
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return luaL_error(state, "cannot reopen stage file");
+    std::ostringstream content;
+    content << input.rdbuf();
+    input.close();
+    std::error_code error;
+    fs::remove(path, error);
+    const std::string result = content.str();
+    lua_pushlstring(state, result.data(), result.size());
+    return 1;
+}
 
 static void usage(std::ostream& out) {
     out << "usage: dazeghost [options] file.lua\n"
@@ -278,6 +307,7 @@ int main(int argc, char** argv) {
     }
     lua_pushlstring(state, source.data(), source.size());
     int arguments = 1;
+    StageContext stage_context{options.output.empty() ? fs::temp_directory_path() / "dazegghost-stage" : fs::path(options.output + ".stage")};
     if (options.mode == "obfuscate") {
         lua_newtable(state);
         set_boolean(state, "anti_ia", anti_ia);
@@ -295,6 +325,9 @@ int main(int argc, char** argv) {
         set_boolean(state, "flatten", options.flatten);
         set_boolean(state, "encode_strings", options.encode_strings);
         if (options.has_seed) set_integer(state, "seed", options.seed);
+        lua_pushlightuserdata(state, &stage_context);
+        lua_pushcclosure(state, stage_writer, 1);
+        lua_setfield(state, -2, "stage_writer");
         arguments = 2;
     }
     if (lua_pcall(state, arguments, 1, 0) != LUA_OK) {
@@ -317,6 +350,13 @@ int main(int argc, char** argv) {
             std::cerr << lua_tostring(state, -1) << "\n";
             lua_close(state);
             return 1;
+        }
+        size_t original_length = 0;
+        size_t compressed_length = 0;
+        const char* original = lua_tolstring(state, -3, &original_length);
+        const char* compressed = lua_tolstring(state, -1, &compressed_length);
+        if (!original || !compressed || compressed_length >= original_length) {
+            lua_pushvalue(state, -3);
         }
     }
     size_t length = 0;

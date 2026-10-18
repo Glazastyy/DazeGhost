@@ -135,51 +135,16 @@ function M.unpack(data)
     return table.concat(output)
 end
 
-local ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-
-local function base64(data)
-    local output = {}
-    local chunk = {}
-    local chunkSize = 0
-    local function emit(value)
-        chunkSize = chunkSize + 1
-        chunk[chunkSize] = value
-        if chunkSize == 4096 then
-            output[#output + 1] = table.concat(chunk)
-            chunk = {}
-            chunkSize = 0
-        end
-    end
-    for index = 1, #data, 3 do
-        local a = data:byte(index)
-        local b = data:byte(index + 1) or 0
-        local c = data:byte(index + 2) or 0
-        local value = a * 0x10000 + b * 0x100 + c
-        local first = (value >> 18) & 63
-        local second = (value >> 12) & 63
-        local third = (value >> 6) & 63
-        local fourth = value & 63
-        emit(ALPHABET:sub(first + 1, first + 1))
-        emit(ALPHABET:sub(second + 1, second + 1))
-        emit(index + 1 <= #data and ALPHABET:sub(third + 1, third + 1) or "=")
-        emit(index + 2 <= #data and ALPHABET:sub(fourth + 1, fourth + 1) or "=")
-    end
-    if chunkSize > 0 then
-        output[#output + 1] = table.concat(chunk)
-    end
-    return table.concat(output)
-end
-
 function M.wrap(data)
     if type(data) ~= "string" then
         error("data must be a string", 2)
     end
     local packed = M.pack(data)
     local checksum = hash(data)
-    local encoded = base64(packed)
+    local encoded = string.format("%q", packed)
     return table.concat({
-        "return(function(S,E)local A='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';local R={};for j=1,#A do R[A:sub(j,j)]=j-1 end;local P={};for j=1,#S,4 do local a=R[S:sub(j,j)];local b=R[S:sub(j+1,j+1)];local c=S:sub(j+2,j+2);local d=S:sub(j+3,j+3);local x=(a<<18)|(b<<12)|((c=='=' and 0 or R[c]<<6))|(d=='=' and 0 or R[d]);P[#P+1]=string.char((x>>16)&255);if c~='=' then P[#P+1]=string.char((x>>8)&255) end;if d~='=' then P[#P+1]=string.char(x&255) end end;local C=table.concat(P);local O={};local n=0;local i=1;while i<=#C do local t=C:byte(i);i=i+1;if t<128 then local z=t+1;for k=1,z do n=n+1;O[n]=string.char(C:byte(i));i=i+1 end else local z=(t&127)+3;local d=C:byte(i)|(C:byte(i+1)<<8);i=i+2;for k=1,z do local p=n-d+1;local value=O[p];if not value then error('invalid compressed data') end;n=n+1;O[n]=value end end end;local data=table.concat(O);local h=2166136261;for k=1,#data do h=((h~data:byte(k))*16777619)&0xFFFFFFFF end;if h~=E then error('compressed payload integrity check failed') end;local fn,err=load(data,nil,'t');if not fn then error(err) end;return fn() end)(",
-        string.format("%q", encoded), ",", tostring(checksum), ")"
+        "return(function(C,E)local O={};local n=0;local i=1;while i<=#C do local t=C:byte(i);i=i+1;if t<128 then local z=t+1;if i+z-1>#C then error('invalid compressed data') end;for k=1,z do n=n+1;O[n]=string.char(C:byte(i));i=i+1 end else local z=(t&127)+3;if i+1>#C then error('invalid compressed data') end;local d=C:byte(i)|(C:byte(i+1)<<8);i=i+2;if d<1 or d>n then error('invalid compressed distance') end;for k=1,z do local p=n-d+1;local value=O[p];if not value then error('invalid compressed distance') end;n=n+1;O[n]=value end end end;local data=table.concat(O);local h=2166136261;for k=1,#data do h=((h~data:byte(k))*16777619)&0xFFFFFFFF end;if h~=E then error('compressed payload integrity check failed') end;local fn,err=load(data,nil,'t');if not fn then error(err) end;return fn() end)(",
+        encoded, ",", tostring(checksum), ")"
     })
 end
 
