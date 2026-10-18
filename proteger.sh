@@ -12,6 +12,8 @@ EXECUTABLE="$DIR/dazeghost"
 BACKUP_DIR=""
 SUCCESS=0
 
+clear && cmake -B build -S . && cmake --build build
+
 cleanup() {
     local status=$?
 
