@@ -91,3 +91,6 @@ cd /home/andre/codes/DazeGhost && ./dazeghost \
   --input /home/andre/codes/DazeGhost/script.lua \
   --decoy /home/andre/codes/DazeGhost/caos.lua \
   --output /home/andre/codes/DazeGhost/protegido.lua
+
+mv /home/andre/codes/DazeGhost/script.lua.bkp /home/andre/codes/DazeGhost/script.lua
+mv /home/andre/codes/DazeGhost/caos.lua.bkp /home/andre/codes/DazeGhost/caos.lua
