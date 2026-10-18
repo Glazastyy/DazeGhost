@@ -313,9 +313,11 @@ Increase output limits deliberately and monitor memory for large five-round inpu
 
 `src.compress` uses an LZ-style stream with literal records and overlap-safe back references. Packed bytes are embedded directly as an escaped Lua binary literal. The output does not use Base64 or an external decompression library.
 
-The generated loader decodes the literal, validates record boundaries and distances, reconstructs the original Lua chunk, checks an FNV-1a integrity value, loads the recovered chunk, and executes it.
+The generated loader decodes the literal, validates record boundaries and distances, reconstructs the original Lua chunk, checks a SHA-256 digest, loads the recovered chunk, and executes it.
 
-The checksum detects corruption and basic tampering. It is not a digital signature and does not establish publisher authenticity.
+When a runtime secret is configured for the sealed loader, the payload check uses HMAC-SHA-256 with that secret. Without a secret, SHA-256 detects accidental corruption but does not establish publisher authenticity.
+
+The runtime digest code follows the standard SHA-256 and HMAC-SHA-256 algorithms. Their round constants are intentionally fixed by the standards and are not encryption keys. The generated obfuscation loader randomizes the surrounding identifiers and sealing material per build; that diversification changes the artifact layout without pretending that a public hash implementation is secret.
 
 ## Lua library API
 
@@ -432,6 +434,7 @@ lua5.4 tests/text.lua
 lua5.4 tests/runtime.lua
 lua5.4 tests/seed.lua
 lua5.4 tests/compress.lua
+lua5.4 tests/digest.lua
 lua5.4 tests/password.lua
 lua5.4 tests/transformations.lua
 lua5.4 tests/cli/run.lua
@@ -465,9 +468,9 @@ The regular Lua output mode remains a Lua loader and therefore requires a compat
 
 The current release does not provide a complete anti-debugging system. The optional hook check and the native `dazeghost_load` boundary raise the cost of simple instrumentation, but a host-controlled process can be traced, paused, instrumented, modified, or run under another Lua runtime.
 
-### Integrity is not authenticity
+### Integrity is not publisher authenticity
 
-The FNV-1a checksum detects corruption but is not a digital signature. It does not prove publisher authenticity and cannot prevent modification of the loader itself.
+Sealed payloads now use SHA-256, or HMAC-SHA-256 when a runtime secret is configured. HMAC prevents an attacker without the secret from forging a valid payload digest, but it is not a publisher signature and cannot prevent modification of the loader itself.
 
 ### Bytecode compatibility
 
@@ -490,8 +493,10 @@ For real authorization, licensing, and sensitive business logic, keep the decisi
 | `src/bind.lua`          | Lexical scope binding.                                                                                                      |
 | `src/emit.lua`          | Compact Lua source emitter.                                                                                                 |
 | `src/weave.lua`         | Conservative decoy weaving.                                                                                                 |
-| `src/crypt.lua`         | Payload sealing and runtime loader generation.                                                                              |
+| `src/crypt.lua`         | Payload sealing, password verification, HMAC-SHA-256 integrity, and runtime loader generation.                              |
 | `src/compress.lua`      | LZ-style packing and single-file loader generation.                                                                         |
+| `src/digest.lua`        | SHA-256 and HMAC-SHA-256 implementation used during generation.                                                             |
+| `src/digest_runtime.lua` | Runtime digest template with per-build identifier diversification.                                                         |
 | `src/random.lua`        | 128-bit random-state initialization.                                                                                        |
 | `src/minify.lua`        | Minification API.                                                                                                           |
 | `src/obfuscate.lua`     | Transformation and multi-round orchestration API.                                                                           |

@@ -1,22 +1,16 @@
 local M = {}
 local random128 = require("src.random")
+local digest = require("src.digest")
+local digestRuntime = require("src.digest_runtime")
 
 local MASK = 0xFFFFFFFF
 
 local function hash(data)
-    local value = 2166136261
-    for i = 1, #data do
-        value = ((value ~ data:byte(i)) * 16777619) & MASK
-    end
-    return value
+    return string.unpack(">I4", digest.raw(data))
 end
 
 local function passwordMaterial(password, seed)
-    local value = seed
-    for i = 1, #password do
-        value = ((value ~ password:byte(i)) * 16777619) & MASK
-    end
-    return value
+    return string.unpack(">I4", digest.raw(string.pack("<I4", seed) .. password))
 end
 
 local function validate(opts)
@@ -100,22 +94,7 @@ local function shuffle(items, random)
 end
 
 local function packBytes(data)
-    local chunks = {}
-    local chunk = {}
-    local chunkSize = 0
-    for i = 1, #data do
-        chunkSize = chunkSize + 1
-        chunk[chunkSize] = tostring(data:byte(i))
-        if chunkSize == 256 then
-            chunks[#chunks + 1] = table.concat(chunk, ",")
-            chunk = {}
-            chunkSize = 0
-        end
-    end
-    if chunkSize > 0 then
-        chunks[#chunks + 1] = table.concat(chunk, ",")
-    end
-    return "{" .. table.concat(chunks, ",") .. "}"
+    return string.format("%q", data)
 end
 
 local function splitMaterial(value, salt)
@@ -179,22 +158,21 @@ local function assemble(data, minimum, maximum, noiseDensity, random)
         indices[1], opChunk, opNoise, opEnd
 end
 
-local function makeLoader(blocks, instructions, entry, opChunk, opNoise, opEnd, key, multiplier, increment, checksum, mode, variant, secretHash, secretEnabled)
+local function makeLoader(blocks, instructions, entry, opChunk, opNoise, opEnd, key, multiplier, increment, checksum, mode, variant, secretVerifier, secretEnabled, random)
     local keyFirst, keySecond = splitMaterial(key, 0xA341316C)
     local multiplierFirst, multiplierSecond = splitMaterial(multiplier, 0xC8013EA4)
     local incrementFirst, incrementSecond = splitMaterial(increment, 0xAD90777D)
     local args = table.concat({
         blocks, instructions, tostring(entry), tostring(opChunk), tostring(opNoise), tostring(opEnd),
         tostring(keyFirst), tostring(keySecond), tostring(multiplierFirst), tostring(multiplierSecond),
-        tostring(incrementFirst), tostring(incrementSecond), tostring(checksum),
-        mode == "text" and "'t'" or "'b'", tostring(secretHash), secretEnabled and "true" or "false"
+        tostring(incrementFirst), tostring(incrementSecond), string.format("%q", checksum),
+        mode == "text" and "'t'" or "'b'", string.format("%q", secretVerifier), secretEnabled and "true" or "false"
     }, ",")
-    local prefix = "return(function(P,I,H,A,B,Z,X1,X2,X3,X4,X5,X6,E,Q)local q1=(X1~X2)&0xFFFFFFFF;local q2=(X3~X4)&0xFFFFFFFF;local q3=(X5~X6)&0xFFFFFFFF;local CH,CONCAT=string.char,table.concat;local O={};local h=2166136261;local a=q1;local b=q2;local c=q3;local d=(q1~q2~q3)&0xFFFFFFFF;local pos=0;local function step(input)pos=pos+1;a=(a+b+pos)&0xFFFFFFFF;b=(((b~a)<<7)|((b~a)>>25))&0xFFFFFFFF;c=(c+d+a)&0xFFFFFFFF;d=(((d~c)<<11)|((d~c)>>21))&0xFFFFFFFF;a=(a+d+q3)&0xFFFFFFFF;c=(((c~b)<<17)|((c~b)>>15))&0xFFFFFFFF;b=(b+c+q2)&0xFFFFFFFF;d=(((d~a)<<19)|((d~a)>>13))&0xFFFFFFFF;local output=(input~((a~b~c~d)&0xFF))&0xFF;O[pos]=CH(output);h=((h~output)*16777619)&0xFFFFFFFF;a=(a~(input*257+pos))&0xFFFFFFFF;d=(d+input+pos)&0xFFFFFFFF end;"
-    local marker = "return(function(P,I,H,A,B,Z,X1,X2,X3,X4,X5,X6,E,Q)"
-    local passwordCode = "if W then local G=rawget(_ENV,'_G') or _ENV;local password=rawget(G,'__DazeGhostPassword');if password==nil then if not io or type(io.read)~='function' then error('password input is unavailable') end;io.write('DazeGhost password: ');password=io.read('*l');if type(password)~='string' then error('password is required') end;local check=2166136261;for i=1,#password do check=((check~password:byte(i))*16777619)&0xFFFFFFFF end;if check~=V then error('invalid password') end;rawset(G,'__DazeGhostPassword',password) end;local function derive(seed)local value=seed;for i=1,#password do value=((value~password:byte(i))*16777619)&0xFFFFFFFF end;return value end;X1=(X1~derive(0x6D2B79F5))&0xFFFFFFFF;X3=(X3~derive(0x1B873593))&0xFFFFFFFF;X5=(X5~derive(0x85EBCA6B))&0xFFFFFFFF end;"
-    local position = assert(prefix:find(marker, 1, true))
-    prefix = prefix:sub(1, position - 1) .. "return(function(P,I,H,A,B,Z,X1,X2,X3,X4,X5,X6,E,Q,V,W)" .. passwordCode .. prefix:sub(position + #marker)
-    local suffix = "if h~=E then error('payload integrity check failed') end;local loader=rawget(_ENV,'dazeghost_load') or load;local fn,err=loader(CONCAT(O),nil,Q);if not fn then error(err) end;return fn() end)(" .. args .. ")"
+    local runtimeDigest, digestNames = digestRuntime.source(random)
+    local prefix = "return(function(P,I,H,A,B,Z,X1,X2,X3,X4,X5,X6,E,Q,V,W)" .. runtimeDigest .. "local q1=(X1~X2)&0xFFFFFFFF;local q2=(X3~X4)&0xFFFFFFFF;local q3=(X5~X6)&0xFFFFFFFF;local CH,CONCAT=string.char,table.concat;local O={};local a=q1;local b=q2;local c=q3;local d=(q1~q2~q3)&0xFFFFFFFF;local pos=0;local function step(input)pos=pos+1;a=(a+b+pos)&0xFFFFFFFF;b=(((b~a)<<7)|((b~a)>>25))&0xFFFFFFFF;c=(c+d+a)&0xFFFFFFFF;d=(((d~c)<<11)|((d~c)>>21))&0xFFFFFFFF;a=(a+d+q3)&0xFFFFFFFF;c=(((c~b)<<17)|((c~b)>>15))&0xFFFFFFFF;b=(b+c+q2)&0xFFFFFFFF;d=(((d~a)<<19)|((d~a)>>13))&0xFFFFFFFF;local output=(input~((a~b~c~d)&0xFF))&0xFF;O[pos]=CH(output);a=(a~(input*257+pos))&0xFFFFFFFF;d=(d+input+pos)&0xFFFFFFFF end;"
+    local passwordCode = "if W then local G=rawget(_ENV,'_G') or _ENV;local password=rawget(G,'__DazeGhostPassword');if password==nil then if not io or type(io.read)~='function' then error('password input is unavailable') end;io.write('DazeGhost password: ');password=io.read('*l');if type(password)~='string' then error('password is required') end end;if " .. digestNames.dgHex .. "(" .. digestNames.dgRaw .. "(password))~=V then error('invalid password') end;rawset(G,'__DazeGhostPassword',password);local function derive(seed)return string.unpack('>I4'," .. digestNames.dgRaw .. "(string.pack('<I4',seed)..password)) end;X1=(X1~derive(0x6D2B79F5))&0xFFFFFFFF;X3=(X3~derive(0x1B873593))&0xFFFFFFFF;X5=(X5~derive(0x85EBCA6B))&0xFFFFFFFF;q1=(X1~X2)&0xFFFFFFFF;q2=(X3~X4)&0xFFFFFFFF;q3=(X5~X6)&0xFFFFFFFF;a=q1;b=q2;c=q3;d=(q1~q2~q3)&0xFFFFFFFF end;"
+    prefix = prefix .. passwordCode
+    local suffix = "local integrity= W and " .. digestNames.dgHmac .. "(rawget(_ENV,'__DazeGhostPassword'),CONCAT(O)) or " .. digestNames.dgHex .. "(" .. digestNames.dgRaw .. "(CONCAT(O)));if integrity~=E then error('payload integrity check failed') end;local loader=rawget(_ENV,'dazeghost_load') or load;local fn,err=loader(CONCAT(O),nil,Q);if not fn then error(err) end;return fn() end)(" .. args .. ")"
     if variant == "linear" then
         return table.concat({
             prefix,
@@ -202,7 +180,7 @@ local function makeLoader(blocks, instructions, entry, opChunk, opNoise, opEnd, 
             "while pc~=0 do local ins=I[pc];if not ins then error('invalid instruction') end;",
             "local op,index=ins[1],ins[2];",
             "if op==Z then break elseif op==A then local data=P[index];if not data then error('missing block') end;",
-            "for j=1,#data do step(data[j]) end;",
+            "for j=1,#data do step(data:byte(j)) end;",
             "elseif op~=B then error('invalid opcode') end;pc=ins[3];end;",
             suffix
         })
@@ -213,7 +191,7 @@ local function makeLoader(blocks, instructions, entry, opChunk, opNoise, opEnd, 
             "local pc=H;local done=false;",
             "while not done do local ins=I[pc];if not ins then error('invalid instruction') end;local op,index=ins[1],ins[2];",
             "if op==Z then done=true elseif op==A then local data=P[index];if not data then error('missing block') end;",
-            "for j=1,#data do step(data[j]) end;pc=ins[3];",
+            "for j=1,#data do step(data:byte(j)) end;pc=ins[3];",
             "elseif op==B then pc=ins[3];else error('invalid opcode') end;end;",
             suffix
         })
@@ -221,7 +199,7 @@ local function makeLoader(blocks, instructions, entry, opChunk, opNoise, opEnd, 
     return table.concat({
         prefix,
         "local pc=H;",
-        "local function chunk(index)local data=P[index];if not data then error('missing block') end;for j=1,#data do step(data[j]) end end;",
+        "local function chunk(index)local data=P[index];if not data then error('missing block') end;for j=1,#data do step(data:byte(j)) end end;",
         "local handlers={[A]=function(index)chunk(index)end,[B]=function()end,[Z]=function()end};",
         "while true do local ins=I[pc];if not ins then error('invalid instruction') end;local handler=handlers[ins[1]];if not handler then error('invalid opcode') end;handler(ins[2]);if ins[1]==Z then break end;pc=ins[3] end;",
         suffix
@@ -257,18 +235,19 @@ function M.seal(source, opts)
     if runtime == "auto" then
         runtime = ({ "linear", "state", "table" })[random(1, 3)]
     end
-    local secretHash = 0
+    local secretVerifier = ""
     local secretEnabled = opts.secret ~= nil
     if secretEnabled then
         if type(opts.secret) ~= "string" or opts.secret == "" then
             error("secret must be a nonempty string", 2)
         end
-        secretHash = hash(opts.secret)
+        secretVerifier = digest.hex(opts.secret)
         key = (key ~ passwordMaterial(opts.secret, 0x6D2B79F5)) & MASK
         multiplier = (multiplier ~ passwordMaterial(opts.secret, 0x1B873593)) & MASK
         increment = (increment ~ passwordMaterial(opts.secret, 0x85EBCA6B)) & MASK
     end
-    return makeLoader(blocks, instructions, entry, opChunk, opNoise, opEnd, key, multiplier, increment, hash(raw), mode, runtime, secretHash, secretEnabled)
+    local checksum = secretEnabled and digest.hmac(opts.secret, raw) or digest.hex(raw)
+    return makeLoader(blocks, instructions, entry, opChunk, opNoise, opEnd, key, multiplier, increment, checksum, mode, runtime, secretVerifier, secretEnabled, random)
 end
 
 return M

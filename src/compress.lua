@@ -1,12 +1,6 @@
 local M = {}
-
-local function hash(data)
-    local value = 2166136261
-    for i = 1, #data do
-        value = ((value ~ data:byte(i)) * 16777619) & 0xFFFFFFFF
-    end
-    return value
-end
+local digest = require("src.digest")
+local digestRuntime = require("src.digest_runtime")
 
 local function hash3(data, index)
     return (data:byte(index) * 257 + data:byte(index + 1) * 17 + data:byte(index + 2)) & 0xFFFF
@@ -140,11 +134,12 @@ function M.wrap(data)
         error("data must be a string", 2)
     end
     local packed = M.pack(data)
-    local checksum = hash(data)
+    local checksum = digest.hex(data)
     local encoded = string.format("%q", packed)
+    local runtime, names = digestRuntime.source()
     return table.concat({
-        "return(function(C,E)local O={};local n=0;local i=1;while i<=#C do local t=C:byte(i);i=i+1;if t<128 then local z=t+1;if i+z-1>#C then error('invalid compressed data') end;for k=1,z do n=n+1;O[n]=string.char(C:byte(i));i=i+1 end else local z=(t&127)+3;if i+1>#C then error('invalid compressed data') end;local d=C:byte(i)|(C:byte(i+1)<<8);i=i+2;if d<1 or d>n then error('invalid compressed distance') end;for k=1,z do local p=n-d+1;local value=O[p];if not value then error('invalid compressed distance') end;n=n+1;O[n]=value end end end;local data=table.concat(O);local h=2166136261;for k=1,#data do h=((h~data:byte(k))*16777619)&0xFFFFFFFF end;if h~=E then error('compressed payload integrity check failed') end;local fn,err=load(data,nil,'t');if not fn then error(err) end;return fn() end)(",
-        encoded, ",", tostring(checksum), ")"
+        "return(function(C,E)", runtime, "local O={};local n=0;local i=1;while i<=#C do local t=C:byte(i);i=i+1;if t<128 then local z=t+1;if i+z-1>#C then error('invalid compressed data') end;for k=1,z do n=n+1;O[n]=string.char(C:byte(i));i=i+1 end else local z=(t&127)+3;if i+1>#C then error('invalid compressed data') end;local d=C:byte(i)|(C:byte(i+1)<<8);i=i+2;if d<1 or d>n then error('invalid compressed distance') end;for k=1,z do local p=n-d+1;local value=O[p];if not value then error('invalid compressed distance') end;n=n+1;O[n]=value end end end;local data=table.concat(O);if " .. names.dgHex .. "(" .. names.dgRaw .. "(data))~=E then error('compressed payload integrity check failed') end;local fn,err=load(data,nil,'t');if not fn then error(err) end;return fn() end)(",
+        encoded, ",", string.format("%q", checksum), ")"
     })
 end
 
