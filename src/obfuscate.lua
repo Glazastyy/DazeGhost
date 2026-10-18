@@ -5,6 +5,7 @@ local crypt = require("src.crypt")
 local weave = require("src.weave")
 local random128 = require("src.random")
 local compress = require("src.compress")
+local digest = require("src.digest")
 local pipeline = require("src.pipeline")
 local names = require("src.names")
 local presets = require("src.presets")
@@ -12,6 +13,10 @@ local presets = require("src.presets")
 local M = {}
 
 local MASK = 0xFFFFFFFF
+
+local function chainContext(layer)
+    return "DazeGhost/chain/v1/" .. tostring(layer)
+end
 
 local function hash(s)
     local value = 2166136261
@@ -249,6 +254,13 @@ function M.obfuscate(src, opts)
     local original = src
     local current = src
     local transformEachRound = opts.transform_each_round == true
+    local layerSecrets
+    if opts.secret ~= nil then
+        layerSecrets = { [rounds] = opts.secret }
+        for layer = rounds - 1, 1, -1 do
+            layerSecrets[layer] = digest.hmac(layerSecrets[layer + 1], chainContext(layer + 1))
+        end
+    end
     for round = 1, rounds do
         local step = {}
         for key, value in pairs(opts) do
@@ -270,6 +282,11 @@ function M.obfuscate(src, opts)
         end
         if opts.noise_density == nil then
             step.noise_density = round == 1 and 25 or 8
+        end
+        if layerSecrets then
+            step.secret = layerSecrets[round]
+            step.chain_next = round > 1
+            step.chain_context = round > 1 and chainContext(round) or nil
         end
         local transformed
         if round == 1 or transformEachRound then

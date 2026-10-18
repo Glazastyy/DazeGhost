@@ -26,12 +26,14 @@ local function dgHex(s)local t={};for i=1,#s do t[i]=string.format('%02x',s:byte
 local function dgHmac(k,s)
 if #k>64 then k=dgRaw(k) end;k=k..string.rep('\0',64-#k);local i,o={},{};for n=1,64 do local b=k:byte(n);i[n]=string.char(b~0x36);o[n]=string.char(b~0x5C) end;return dgHex(dgRaw(table.concat(o)..dgRaw(table.concat(i)..s)))
 end
+local function dgEq(a,b)if #a~=#b then return false end;local x=0;for i=1,#a do x=x|(a:byte(i)~b:byte(i)) end;return x==0 end
 ]]
     if rand == nil then
         return source, {
             dgRaw = "dgRaw",
             dgHex = "dgHex",
-            dgHmac = "dgHmac"
+            dgHmac = "dgHmac",
+            dgEq = "dgEq"
         }
     end
     local used = {
@@ -40,7 +42,7 @@ end
         E = true, Q = true, V = true, W = true, string = true, table = true,
     }
     local nextName = names.new("random", rand, used)
-    local order = { "dgK", "dgRoundConstantsHex", "dgN", "dgR", "dgRaw", "dgHex", "dgHmac" }
+    local order = { "dgK", "dgRoundConstantsHex", "dgN", "dgR", "dgRaw", "dgHex", "dgHmac", "dgEq" }
     local replacements = {
         dgK = nextName(),
         dgRoundConstantsHex = nextName(),
@@ -48,7 +50,8 @@ end
         dgR = nextName(),
         dgRaw = nextName(),
         dgHex = nextName(),
-        dgHmac = nextName()
+        dgHmac = nextName(),
+        dgEq = nextName()
     }
     for _, original in ipairs(order) do
         source = source:gsub("%f[%w_]" .. original .. "%f[^%w_]", replacements[original])

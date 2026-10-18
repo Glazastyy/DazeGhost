@@ -210,6 +210,8 @@ echo "$secret" | lua5.4 protected.lua
 
 The loader asks for the secret before decrypting the payload. A wrong secret aborts execution. The generated secret is not written into the Lua file.
 
+When `--secret` is used with more than one obfuscation round, the supplied or generated value is the root secret for the outermost layer. Each inner layer receives a one-way HMAC-SHA-256 chain value derived from the previous layer and a domain-separated layer context. The next value is derived only after the current layer has authenticated and reconstructed its payload. The artifact contains no literal inner-layer passwords.
+
 ### Supplied runtime secret
 
 ```bash
@@ -359,7 +361,7 @@ local obfuscate = require("src.obfuscate")
 local result = obfuscate.obfuscate(source, options)
 ```
 
-Important options include `anti_ia`, `decoy_src`, `decoy_path`, `rounds`, `mix_original`, `decoy_density`, `max_decoy_fragments`, `flatten`, `rename_locals`, `encode_strings`, `split_strings`, `split_min_length`, `numbers_to_expressions`, `constant_array`, `proxify_locals`, `watermark`, `anti_tamper`, `steps`, `min_chunk_size`, `max_chunk_size`, `noise_density`, `strip`, `mode`, `runtime`, `seed`, `secret`, `max_output_bytes`, `max_intermediate_bytes`, `compress_rounds`, and `stage_writer`.
+Important options include `anti_ia`, `decoy_src`, `decoy_path`, `rounds`, `mix_original`, `decoy_density`, `max_decoy_fragments`, `flatten`, `rename_locals`, `encode_strings`, `split_strings`, `split_min_length`, `numbers_to_expressions`, `constant_array`, `proxify_locals`, `watermark`, `anti_tamper`, `steps`, `min_chunk_size`, `max_chunk_size`, `noise_density`, `strip`, `mode`, `runtime`, `seed`, `secret`, `chain_context`, `chain_next`, `max_output_bytes`, `max_intermediate_bytes`, `compress_rounds`, and `stage_writer`.
 
 `stage_writer` receives `(data, round)` and must return the string passed into the next round. The C++ CLI supplies this callback to provide staged file boundaries.
 
@@ -435,6 +437,7 @@ lua5.4 tests/runtime.lua
 lua5.4 tests/seed.lua
 lua5.4 tests/compress.lua
 lua5.4 tests/digest.lua
+lua5.4 tests/chain.lua
 lua5.4 tests/password.lua
 lua5.4 tests/transformations.lua
 lua5.4 tests/cli/run.lua
@@ -467,6 +470,10 @@ The regular Lua output mode remains a Lua loader and therefore requires a compat
 ### No guaranteed anti-debugging
 
 The current release does not provide a complete anti-debugging system. The optional hook check and the native `dazeghost_load` boundary raise the cost of simple instrumentation, but a host-controlled process can be traced, paused, instrumented, modified, or run under another Lua runtime.
+
+### Layer chaining is not the Signal protocol
+
+The multi-round password flow uses a local one-way chain-key construction inspired by the dependency model of Signal. It is not a complete Signal implementation: there is no X3DH handshake, identity key, session negotiation, replay protection, or network transport. Its purpose is to prevent the password for one protected layer from being reused directly for the next layer while keeping one root secret sufficient for normal execution.
 
 ### Integrity is not publisher authenticity
 

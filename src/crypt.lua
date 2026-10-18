@@ -38,6 +38,16 @@ local function validate(opts)
         and opts.runtime ~= "state" and opts.runtime ~= "table" then
         error("runtime must be 'auto', 'linear', 'state' or 'table'", 3)
     end
+    if opts.chain_next == true then
+        if type(opts.chain_context) ~= "string" or opts.chain_context == "" then
+            error("chain_context must be a nonempty string when chain_next is enabled", 3)
+        end
+        if type(opts.secret) ~= "string" or opts.secret == "" then
+            error("chain_next requires a nonempty secret", 3)
+        end
+    elseif opts.chain_context ~= nil and (type(opts.chain_context) ~= "string" or opts.chain_context == "") then
+        error("chain_context must be a nonempty string", 3)
+    end
     if type(noiseDensity) ~= "number" or noiseDensity % 1 ~= 0 or noiseDensity < 0 or noiseDensity > 100 then
         error("noise_density must be an integer between 0 and 100", 3)
     end
@@ -158,7 +168,7 @@ local function assemble(data, minimum, maximum, noiseDensity, random)
         indices[1], opChunk, opNoise, opEnd
 end
 
-local function makeLoader(blocks, instructions, entry, opChunk, opNoise, opEnd, key, multiplier, increment, checksum, mode, variant, secretVerifier, secretEnabled, random)
+local function makeLoader(blocks, instructions, entry, opChunk, opNoise, opEnd, key, multiplier, increment, checksum, mode, variant, secretVerifier, secretEnabled, chainContext, chainNext, random)
     local keyFirst, keySecond = splitMaterial(key, 0xA341316C)
     local multiplierFirst, multiplierSecond = splitMaterial(multiplier, 0xC8013EA4)
     local incrementFirst, incrementSecond = splitMaterial(increment, 0xAD90777D)
@@ -166,13 +176,14 @@ local function makeLoader(blocks, instructions, entry, opChunk, opNoise, opEnd, 
         blocks, instructions, tostring(entry), tostring(opChunk), tostring(opNoise), tostring(opEnd),
         tostring(keyFirst), tostring(keySecond), tostring(multiplierFirst), tostring(multiplierSecond),
         tostring(incrementFirst), tostring(incrementSecond), string.format("%q", checksum),
-        mode == "text" and "'t'" or "'b'", string.format("%q", secretVerifier), secretEnabled and "true" or "false"
+        mode == "text" and "'t'" or "'b'", string.format("%q", secretVerifier), secretEnabled and "true" or "false",
+        string.format("%q", chainContext or ""), chainNext and "true" or "false"
     }, ",")
     local runtimeDigest, digestNames = digestRuntime.source(random)
-    local prefix = "return(function(P,I,H,A,B,Z,X1,X2,X3,X4,X5,X6,E,Q,V,W)" .. runtimeDigest .. "local q1=(X1~X2)&0xFFFFFFFF;local q2=(X3~X4)&0xFFFFFFFF;local q3=(X5~X6)&0xFFFFFFFF;local CH,CONCAT=string.char,table.concat;local O={};local a=q1;local b=q2;local c=q3;local d=(q1~q2~q3)&0xFFFFFFFF;local pos=0;local function step(input)pos=pos+1;a=(a+b+pos)&0xFFFFFFFF;b=(((b~a)<<7)|((b~a)>>25))&0xFFFFFFFF;c=(c+d+a)&0xFFFFFFFF;d=(((d~c)<<11)|((d~c)>>21))&0xFFFFFFFF;a=(a+d+q3)&0xFFFFFFFF;c=(((c~b)<<17)|((c~b)>>15))&0xFFFFFFFF;b=(b+c+q2)&0xFFFFFFFF;d=(((d~a)<<19)|((d~a)>>13))&0xFFFFFFFF;local output=(input~((a~b~c~d)&0xFF))&0xFF;O[pos]=CH(output);a=(a~(input*257+pos))&0xFFFFFFFF;d=(d+input+pos)&0xFFFFFFFF end;"
-    local passwordCode = "if W then local G=rawget(_ENV,'_G') or _ENV;local password=rawget(G,'__DazeGhostPassword');if password==nil then if not io or type(io.read)~='function' then error('password input is unavailable') end;io.write('DazeGhost password: ');password=io.read('*l');if type(password)~='string' then error('password is required') end end;if " .. digestNames.dgHex .. "(" .. digestNames.dgRaw .. "(password))~=V then error('invalid password') end;rawset(G,'__DazeGhostPassword',password);local function derive(seed)return string.unpack('>I4'," .. digestNames.dgRaw .. "(string.pack('<I4',seed)..password)) end;X1=(X1~derive(0x6D2B79F5))&0xFFFFFFFF;X3=(X3~derive(0x1B873593))&0xFFFFFFFF;X5=(X5~derive(0x85EBCA6B))&0xFFFFFFFF;q1=(X1~X2)&0xFFFFFFFF;q2=(X3~X4)&0xFFFFFFFF;q3=(X5~X6)&0xFFFFFFFF;a=q1;b=q2;c=q3;d=(q1~q2~q3)&0xFFFFFFFF end;"
+    local prefix = "return(function(P,I,H,A,B,Z,X1,X2,X3,X4,X5,X6,E,Q,V,W,C,T)" .. runtimeDigest .. "local q1=(X1~X2)&0xFFFFFFFF;local q2=(X3~X4)&0xFFFFFFFF;local q3=(X5~X6)&0xFFFFFFFF;local CH,CONCAT=string.char,table.concat;local O={};local a=q1;local b=q2;local c=q3;local d=(q1~q2~q3)&0xFFFFFFFF;local pos=0;local authenticationPassword=nil;local function step(input)pos=pos+1;a=(a+b+pos)&0xFFFFFFFF;b=(((b~a)<<7)|((b~a)>>25))&0xFFFFFFFF;c=(c+d+a)&0xFFFFFFFF;d=(((d~c)<<11)|((d~c)>>21))&0xFFFFFFFF;a=(a+d+q3)&0xFFFFFFFF;c=(((c~b)<<17)|((c~b)>>15))&0xFFFFFFFF;b=(b+c+q2)&0xFFFFFFFF;d=(((d~a)<<19)|((d~a)>>13))&0xFFFFFFFF;local output=(input~((a~b~c~d)&0xFF))&0xFF;O[pos]=CH(output);a=(a~(input*257+pos))&0xFFFFFFFF;d=(d+input+pos)&0xFFFFFFFF end;"
+    local passwordCode = "if W then local G=rawget(_ENV,'_G') or _ENV;local password=rawget(G,'__DazeGhostPassword');if password==nil then if not io or type(io.read)~='function' then error('password input is unavailable') end;io.write('DazeGhost password: ');password=io.read('*l');if type(password)~='string' then error('password is required') end end;if not " .. digestNames.dgEq .. "(" .. digestNames.dgHex .. "(" .. digestNames.dgRaw .. "(password)),V) then error('invalid password') end;authenticationPassword=password;rawset(G,'__DazeGhostPassword',password);local function derive(seed)return string.unpack('>I4'," .. digestNames.dgRaw .. "(string.pack('<I4',seed)..password)) end;X1=(X1~derive(0x6D2B79F5))&0xFFFFFFFF;X3=(X3~derive(0x1B873593))&0xFFFFFFFF;X5=(X5~derive(0x85EBCA6B))&0xFFFFFFFF;q1=(X1~X2)&0xFFFFFFFF;q2=(X3~X4)&0xFFFFFFFF;q3=(X5~X6)&0xFFFFFFFF;a=q1;b=q2;c=q3;d=(q1~q2~q3)&0xFFFFFFFF end;"
     prefix = prefix .. passwordCode
-    local suffix = "local integrity= W and " .. digestNames.dgHmac .. "(rawget(_ENV,'__DazeGhostPassword'),CONCAT(O)) or " .. digestNames.dgHex .. "(" .. digestNames.dgRaw .. "(CONCAT(O)));if integrity~=E then error('payload integrity check failed') end;local loader=rawget(_ENV,'dazeghost_load') or load;local fn,err=loader(CONCAT(O),nil,Q);if not fn then error(err) end;return fn() end)(" .. args .. ")"
+    local suffix = "local integrity= W and " .. digestNames.dgHmac .. "(authenticationPassword,CONCAT(O)) or " .. digestNames.dgHex .. "(" .. digestNames.dgRaw .. "(CONCAT(O)));if not " .. digestNames.dgEq .. "(integrity,E) then error('payload integrity check failed') end;local loader=rawget(_ENV,'dazeghost_load') or load;local fn,err=loader(CONCAT(O),nil,Q,_ENV);if not fn then error(err) end;if T then rawset(rawget(_ENV,'_G') or _ENV,'__DazeGhostPassword'," .. digestNames.dgHmac .. "(authenticationPassword,C)) end;return fn() end)(" .. args .. ")"
     if variant == "linear" then
         return table.concat({
             prefix,
@@ -247,7 +258,7 @@ function M.seal(source, opts)
         increment = (increment ~ passwordMaterial(opts.secret, 0x85EBCA6B)) & MASK
     end
     local checksum = secretEnabled and digest.hmac(opts.secret, raw) or digest.hex(raw)
-    return makeLoader(blocks, instructions, entry, opChunk, opNoise, opEnd, key, multiplier, increment, checksum, mode, runtime, secretVerifier, secretEnabled, random)
+    return makeLoader(blocks, instructions, entry, opChunk, opNoise, opEnd, key, multiplier, increment, checksum, mode, runtime, secretVerifier, secretEnabled, opts.chain_context, opts.chain_next == true, random)
 end
 
 return M
