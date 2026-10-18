@@ -106,12 +106,16 @@ else()
 endif()
 
 add_executable(dazeghost cpp/main.cpp)
-set_target_properties(dazeghost PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}"
-)
-target_include_directories(dazeghost PRIVATE ${DAZEGHOST_LUA_INCLUDE_DIRS})
-target_link_directories(dazeghost PRIVATE ${DAZEGHOST_LUA_LIBRARY_DIRS})
-target_link_libraries(dazeghost PRIVATE ${DAZEGHOST_LUA_LIBRARIES})
-if(LUA_CFLAGS_OTHER AND DAZEGHOST_SYSTEM_LUA)
-    target_compile_options(dazeghost PRIVATE ${LUA_CFLAGS_OTHER})
-endif()
+add_executable(dazeghost-loader cpp/native_loader.cpp)
+
+foreach(target dazeghost dazeghost-loader)
+    set_target_properties(${target} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    target_include_directories(${target} PRIVATE ${DAZEGHOST_LUA_INCLUDE_DIRS})
+    target_link_directories(${target} PRIVATE ${DAZEGHOST_LUA_LIBRARY_DIRS})
+    target_link_libraries(${target} PRIVATE ${DAZEGHOST_LUA_LIBRARIES})
+    if(LUA_CFLAGS_OTHER AND DAZEGHOST_SYSTEM_LUA)
+        target_compile_options(${target} PRIVATE ${LUA_CFLAGS_OTHER})
+    endif()
+endforeach()

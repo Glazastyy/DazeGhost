@@ -37,6 +37,7 @@ struct Options {
     bool flatten = true;
     bool encode_strings = true;
     bool compress = false;
+    bool native_loader = false;
     bool has_secret = false;
     std::string secret;
     std::string secret_file = "dazeghost.secret.txt";
@@ -45,6 +46,9 @@ struct Options {
 struct StageContext {
     fs::path prefix;
 };
+
+static constexpr char native_magic[] = "DGNATIVE54";
+static constexpr std::size_t native_magic_size = sizeof(native_magic) - 1;
 
 static int stage_writer(lua_State* state) {
     auto* context = static_cast<StageContext*>(lua_touserdata(state, lua_upvalueindex(1)));
@@ -82,6 +86,7 @@ static void usage(std::ostream& out) {
         << "  --mode bytecode|text\n"
         << "  --runtime auto|linear|state|table\n"
         << "  --compress\n"
+        << "  --native-loader\n"
         << "  --secret [VALUE]\n"
         << "  --secret-file FILE\n"
         << "  --seed N\n"
@@ -166,6 +171,10 @@ static bool parse_arguments(int argc, char** argv, Options& options, bool& anti_
         }
         if (argument == "--compress") {
             options.compress = true;
+            continue;
+        }
+        if (argument == "--native-loader") {
+            options.native_loader = true;
             continue;
         }
         std::string value;
@@ -269,6 +278,35 @@ static std::string slurp(const fs::path& path) {
     return content.str();
 }
 
+static void write_u64_le(std::ostream& output, std::uint64_t value) {
+    char bytes[sizeof(value)];
+    for (std::size_t index = 0; index < sizeof(value); ++index) {
+        bytes[index] = static_cast<char>((value >> (index * 8)) & 0xFFU);
+    }
+    output.write(bytes, sizeof(bytes));
+}
+
+static bool append_native_payload(const fs::path& loader, const fs::path& output, const std::string& payload) {
+    const std::string loader_bytes = slurp(loader);
+    if (loader_bytes.empty()) return false;
+    std::ofstream file(output, std::ios::binary | std::ios::trunc);
+    if (!file) return false;
+    file.write(loader_bytes.data(), static_cast<std::streamsize>(loader_bytes.size()));
+    file.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    write_u64_le(file, static_cast<std::uint64_t>(payload.size()));
+    file.write(native_magic, static_cast<std::streamsize>(native_magic_size));
+    file.close();
+    if (!file) return false;
+    std::error_code error;
+    fs::permissions(output,
+        fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec |
+        fs::perms::group_read | fs::perms::group_exec |
+        fs::perms::others_read | fs::perms::others_exec,
+        fs::perm_options::replace,
+        error);
+    return !error;
+}
+
 static fs::path find_root(const fs::path& argv0) {
     std::vector<fs::path> candidates;
     std::error_code error;
@@ -322,6 +360,14 @@ int main(int argc, char** argv) {
     bool anti_ia = false;
     if (!parse_arguments(argc, argv, options, anti_ia)) {
         usage(std::cerr);
+        return 2;
+    }
+    if (options.native_loader && options.mode != "obfuscate") {
+        std::cerr << "--native-loader requires --obfuscate\n";
+        return 2;
+    }
+    if (options.native_loader && !options.has_secret) {
+        std::cerr << "--native-loader requires --secret\n";
         return 2;
     }
     status(options.mode == "minify" ? "Starting minification." : "Starting obfuscation.");
@@ -440,6 +486,24 @@ int main(int argc, char** argv) {
     std::string result(output, length);
     if (result.empty() || result.back() != '\n') result.push_back('\n');
     lua_close(state);
+    if (options.native_loader) {
+        if (options.output.empty()) {
+            std::cerr << "--native-loader requires --output\n";
+            return 2;
+        }
+        const fs::path loader = find_root(argv[0]) / "dazeghost-loader";
+        if (!fs::exists(loader)) {
+            std::cerr << "native loader executable is not available; build dazeghost-loader first\n";
+            return 1;
+        }
+        status("Embedding the payload into the native Lua 5.4 loader.");
+        if (!append_native_payload(loader, options.output, result)) {
+            std::cerr << "cannot create native loader output\n";
+            return 1;
+        }
+        status("Completed native loader: " + std::to_string(fs::file_size(options.output)) + " bytes written.");
+        return 0;
+    }
     if (options.output.empty()) {
         status("Writing generated code to standard output.");
         std::cout.write(result.data(), static_cast<std::streamsize>(result.size()));

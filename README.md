@@ -16,7 +16,7 @@ cmake --build build
 ./dazeghost --help
 ```
 
-The executable is written to the project root. The `build/` directory contains intermediate files and the root executable is ignored by Git.
+The executables are written to the project root: `./dazeghost` is the generator and `./dazeghost-loader` is the native loader template. The `build/` directory contains intermediate files and the root executables are ignored by Git.
 
 To force the bundled Lua build:
 
@@ -51,6 +51,8 @@ Examples:
 ./dazeghost --obfuscate --anti-ia -i script.lua -d caos.lua -o protected.lua
 ./dazeghost --obfuscate --rounds 3 --density 70 --compress \
   -i script.lua -d caos.lua -o protected.lua
+./dazeghost --obfuscate --mode text --secret --native-loader \
+  -i script.lua -o protected
 ```
 
 Run `./dazeghost --help` for the compact built-in help.
@@ -94,6 +96,7 @@ If both `--minify` and `--obfuscate` are supplied, the last operation-selection 
 | `--max-output-bytes N` | `12582912` | Maximum output of every sealing round. The operation fails when exceeded. |
 | `--max-intermediate-bytes N` | `max(8 * output, 67108864)` | Maximum transformed intermediate source size. |
 | `--compress` | Disabled | Runs the final LZ-style packer and keeps its loader only when it is smaller. |
+| `--native-loader` | Disabled | Embeds the final protected Lua payload into the native `dazeghost-loader` executable. Requires `--obfuscate`, `--secret`, and `--output`. |
 
 ### Runtime secret
 
@@ -174,6 +177,27 @@ Avoid shell history, process listings, CI logs, and public command output when h
 ```
 
 Packing is attempted after all requested rounds. Because the loader has overhead, the packed form is selected only when its complete size is smaller.
+
+### Native single-file loader
+
+```bash
+./dazeghost --obfuscate --mode text --secret \
+  --secret-file release.secret.txt \
+  --native-loader \
+  --input script.lua \
+  --output protected
+```
+
+This mode appends the protected Lua loader to the native `dazeghost-loader` template. The result is one executable file that contains the complete Lua 5.4 runtime, the protected payload, and the payload metadata. It does not require a separate `lua5.4` installation at execution time.
+
+The generated file is executable on the platform and architecture used for the build. A native artifact must be rebuilt for another operating-system or CPU/ABI target. The runtime password prompt is provided by the protected payload:
+
+```bash
+secret=$(cat release.secret.txt)
+printf '%s\n' "$secret" | ./protected
+```
+
+`--native-loader` requires a secret because the native artifact is intended to be a password-gated distribution unit. The generator fails early if the native template is unavailable or if an output path is not supplied.
 
 ## Runtime password protection
 
@@ -338,6 +362,7 @@ cmake --build build
 ./dazeghost --obfuscate --mode text \
   --input script.lua --output /tmp/protected.lua
 lua5.4 /tmp/protected.lua
+bash tests/native_loader.sh
 ```
 
 ## Security model and limitations
@@ -346,9 +371,11 @@ lua5.4 /tmp/protected.lua
 
 If a loader can decrypt and execute a payload on a host controlled by the analyst, the analyst can eventually observe the key, plaintext, or execution state. Runtime password protection raises the cost of casual extraction but cannot create a trust boundary on an untrusted machine.
 
-### No complete Lua virtual machine
+### Native execution uses the complete Lua 5.4 VM
 
-DazeGhost currently uses Lua's normal loader for the recovered payload. It does not implement a complete replacement Lua 5.4 virtual machine and does not currently split unsupported AST regions into independently virtualized and native-executed segments.
+The native loader embeds the official Lua 5.4 runtime and executes the recovered payload with that VM. This provides complete Lua 5.4 language and standard-library semantics supported by the embedded build; it is not a partial custom interpreter.
+
+The regular Lua output mode remains a Lua loader and therefore requires a compatible Lua 5.4 interpreter at execution time. The native loader is the portable single-file option within the operating-system and architecture family for which it was compiled.
 
 ### No guaranteed anti-debugging
 
@@ -372,7 +399,8 @@ For real authorization, licensing, and sensitive business logic, keep the decisi
 
 | Path | Purpose |
 | --- | --- |
-| `cpp/main.cpp` | C++17 CLI, embedded Lua runtime, progress reporting, staging, and secret-file handling. |
+| `cpp/main.cpp` | C++17 generator CLI, embedded Lua runtime, progress reporting, staging, secret-file handling, and native payload packaging. |
+| `cpp/native_loader.cpp` | Native single-file loader that embeds the complete Lua 5.4 VM and executes an appended protected payload. |
 | `src/lexer.lua` | Lua 5.4 lexer. |
 | `src/parser.lua` | Recursive-descent and Pratt parser. |
 | `src/bind.lua` | Lexical scope binding. |
@@ -383,7 +411,7 @@ For real authorization, licensing, and sensitive business logic, keep the decisi
 | `src/random.lua` | 128-bit random-state initialization. |
 | `src/minify.lua` | Minification API. |
 | `src/obfuscate.lua` | Transformation and multi-round orchestration API. |
-| `tests/` | Semantic, property, runtime, seed, compression, password, and integration tests. |
+| `tests/` | Semantic, property, runtime, seed, compression, password, native-loader, and integration tests. |
 | `CMakeLists.txt` | Portable CMake build with system-Lua detection and bundled Lua fallback. |
 
 ## License
