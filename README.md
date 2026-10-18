@@ -367,7 +367,7 @@ local obfuscate = require("src.obfuscate")
 local result = obfuscate.obfuscate(source, options)
 ```
 
-Important options include `anti_ia`, `decoy_src`, `decoy_path`, `rounds`, `mix_original`, `decoy_density`, `max_decoy_fragments`, `flatten`, `rename_locals`, `encode_strings`, `split_strings`, `split_min_length`, `numbers_to_expressions`, `constant_array`, `proxify_locals`, `watermark`, `anti_tamper`, `steps`, `min_chunk_size`, `max_chunk_size`, `noise_density`, `strip`, `mode`, `runtime`, `cipher_variant`, `seed`, `secret`, `chain_context`, `chain_next`, `max_output_bytes`, `max_intermediate_bytes`, `compress_rounds`, and `stage_writer`.
+Important options include `anti_ia`, `decoy_src`, `decoy_path`, `rounds`, `mix_original`, `decoy_density`, `max_decoy_fragments`, `flatten`, `rename_locals`, `encode_strings`, `rewrite_static_members`, `split_strings`, `split_min_length`, `numbers_to_expressions`, `constant_array`, `proxify_locals`, `watermark`, `anti_tamper`, `steps`, `min_chunk_size`, `max_chunk_size`, `noise_density`, `strip`, `mode`, `runtime`, `cipher_variant`, `seed`, `secret`, `chain_context`, `chain_next`, `max_output_bytes`, `max_intermediate_bytes`, `compress_rounds`, and `stage_writer`.
 
 `stage_writer` receives `(data, round)` and must return the string passed into the next round. The C++ CLI supplies this callback to provide staged file boundaries.
 

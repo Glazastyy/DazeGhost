@@ -85,7 +85,7 @@ end
 local function protectStrings(ast, name, rand)
     local changed = false
     walk(ast, function(node)
-        if node.tag ~= "string" then
+        if node.tag ~= "string" or node.generated then
             return
         end
         local value = literalValue(node.value)
@@ -101,12 +101,46 @@ local function protectStrings(ast, name, rand)
         node.value = nil
         node.callee = { tag = "name", value = name }
         node.args = {
-            { tag = "string", value = '"' .. table.concat(bytes) .. '"' },
-            { tag = "number", value = tostring(key) }
+            { tag = "string", value = '"' .. table.concat(bytes) .. '"', generated = true },
+            { tag = "number", value = tostring(key), generated = true }
         }
+        node.generated = true
         changed = true
     end)
     return changed
+end
+
+local function rewriteStaticMembers(ast)
+    local function preserveFunctionName(node)
+        if type(node) ~= "table" then
+            return
+        end
+        node.preserveMemberName = true
+        for _, value in pairs(node) do
+            if type(value) == "table" then
+                preserveFunctionName(value)
+            end
+        end
+    end
+    walk(ast, function(node)
+        if node.tag == "functionstat" then
+            preserveFunctionName(node.name)
+        end
+    end)
+    walk(ast, function(node)
+        if node.preserveMemberName then
+            return
+        end
+        if node.tag == "namefield" then
+            node.tag = "indexfield"
+            node.key = { tag = "string", value = string.format("%q", node.name.value) }
+            node.name = nil
+        elseif node.tag == "field" then
+            node.tag = "index"
+            node.index = { tag = "string", value = string.format("%q", node.name.value) }
+            node.name = nil
+        end
+    end)
 end
 
 local function flattenBlock(block, name, rand)
@@ -211,7 +245,19 @@ function M.transform(src, opts)
         freshName = nextName,
         nameGenerator = nextName
     }
+    local stringHelper
+    local encodedStrings = false
+    if opts.encode_strings ~= false then
+        if opts.rewrite_static_members ~= false then
+            rewriteStaticMembers(ast)
+        end
+        stringHelper = nextName()
+        encodedStrings = protectStrings(ast, stringHelper, rand)
+    end
     pipeline.run(ast, context, opts.steps)
+    if stringHelper and protectStrings(ast, stringHelper, rand) then
+        encodedStrings = true
+    end
     if opts.rename_locals ~= false then
         walk(ast, function(node)
             if node.tag == "name" and node.decl and not node.fixed then
@@ -227,11 +273,8 @@ function M.transform(src, opts)
         local guard = nextName()
         prefix = "local " .. guard .. "=(function()local d=debug;if d and type(d.gethook)=='function' and d.gethook()~=nil then return false end;return true end)();if not " .. guard .. " then error('runtime integrity check failed') end;"
     end
-    if opts.encode_strings ~= false then
-        local helper = nextName()
-        if protectStrings(ast, helper, rand) then
-            prefix = "local " .. helper .. "=(function()local c,t=string.char,table.concat;return function(s,k)local a={};for i=1,#s do a[i]=c((s:byte(i)~((k+i*73)&255))&255)end;return t(a)end end)();"
-        end
+    if encodedStrings then
+        prefix = "local " .. stringHelper .. "=(function()local c,t=string.char,table.concat;return function(s,k)local a={};for i=1,#s do a[i]=c((s:byte(i)~((k+i*73)&255))&255)end;return t(a)end end)();"
     end
     if opts.flatten ~= false then
         local state = nextName()

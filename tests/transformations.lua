@@ -43,6 +43,26 @@ do
 end
 
 do
+    local source = [[
+local configuration = {
+    initialize = function()
+        return "sensitive-message"
+    end
+}
+return configuration.initialize()
+]]
+    local output = obfuscate.transform(source, {
+        seed = 37,
+        encode_strings = true,
+        constant_array = true
+    })
+    local chunk = assert(load(output, "=member-obfuscation", "t"))
+    assert(chunk() == "sensitive-message")
+    assert(not output:find("initialize", 1, true))
+    assert(not output:find("sensitive-message", 1, true))
+end
+
+do
     local registered = "registered_stage_for_test"
     pipeline.register(registered, function(ast, context)
         context.options.registered_stage_used = true
