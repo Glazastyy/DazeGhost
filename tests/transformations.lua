@@ -1,11 +1,83 @@
 local obfuscate = require("src.obfuscate")
 local crypt = require("src.crypt")
+local names = require("src.names")
+local pipeline = require("src.pipeline")
+local presets = require("src.presets")
 
 local function execute(source, environment)
     environment = environment or _G
     local chunk, err = load(source, "=transformations", "t", environment)
     assert(chunk, err)
     return table.pack(chunk())
+end
+
+do
+    local availableNames = names.available()
+    assert(table.concat(availableNames, ","):find("compact", 1, true))
+    assert(table.concat(availableNames, ","):find("random", 1, true))
+    assert(presets.resolve("balanced").constant_array == true)
+    assert(presets.resolve("compact").constant_array == false)
+    assert(presets.resolve("strong").proxify_locals == true)
+    local availableSteps = pipeline.available()
+    assert(table.concat(availableSteps, ","):find("constant_array", 1, true))
+    assert(#pipeline.defaults() == 5)
+end
+
+do
+    local count = 0
+    local output = obfuscate.transform("local original_name=4;return original_name", {
+        encode_strings = false,
+        split_strings = false,
+        numbers_to_expressions = false,
+        constant_array = false,
+        proxify_locals = false,
+        flatten = false,
+        name_generator = function()
+            count = count + 1
+            return "customName" .. count
+        end,
+        seed = 31
+    })
+    assert(output:find("customName1", 1, true))
+    assert(not output:find("original_name", 1, true))
+end
+
+do
+    local registered = "registered_stage_for_test"
+    pipeline.register(registered, function(ast, context)
+        context.options.registered_stage_used = true
+        ast.stats[1] = { tag = "return", explist = {{ tag = "number", value = "11" }} }
+    end)
+    local output = obfuscate.transform("return 3", {
+        steps = { registered },
+        encode_strings = false,
+        flatten = false,
+        rename_locals = false
+    })
+    assert(execute(output)[1] == 11)
+end
+
+do
+    local ok, message = pcall(function()
+        obfuscate.transform("return 3", { steps = { "missing_stage" } })
+    end)
+    assert(not ok)
+    assert(tostring(message):find("unknown transformation step", 1, true))
+end
+
+do
+    local compact = obfuscate.transform("local value=12345;return value", {
+        preset = "compact",
+        encode_strings = false,
+        flatten = false
+    })
+    assert(compact:find("12345", 1, true))
+    local balanced = obfuscate.transform("local value=12345;return value", {
+        preset = "balanced",
+        encode_strings = false,
+        flatten = false
+    })
+    assert(not balanced:find("12345", 1, true))
 end
 
 do

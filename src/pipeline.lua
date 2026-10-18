@@ -16,6 +16,23 @@ local defaults = {
     "watermark"
 }
 
+local function validateName(name)
+    if type(name) ~= "string" or not name:match("^[a-z][a-z0-9_]*$") then
+        error("transformation step name must be lowercase snake case", 3)
+    end
+end
+
+function M.register(name, implementation)
+    validateName(name)
+    if type(implementation) == "function" then
+        implementation = { apply = implementation }
+    end
+    if type(implementation) ~= "table" or type(implementation.apply) ~= "function" then
+        error("transformation step must be a function or a table with apply", 2)
+    end
+    builtins[name] = implementation
+end
+
 local function listSteps(requested)
     if requested == nil then
         local result = {}
@@ -30,8 +47,9 @@ local function listSteps(requested)
     return requested
 end
 
-function M.run(ast, context, requested)
-    for _, step in ipairs(listSteps(requested)) do
+function M.resolve(requested)
+    local result = {}
+    for index, step in ipairs(listSteps(requested)) do
         local implementation
         if type(step) == "string" then
             implementation = builtins[step]
@@ -45,6 +63,13 @@ function M.run(ast, context, requested)
         else
             error("invalid transformation step", 3)
         end
+        result[index] = implementation
+    end
+    return result
+end
+
+function M.run(ast, context, requested)
+    for _, implementation in ipairs(M.resolve(requested)) do
         implementation.apply(ast, context)
     end
     return ast
@@ -56,6 +81,14 @@ function M.available()
         result[#result + 1] = name
     end
     table.sort(result)
+    return result
+end
+
+function M.defaults()
+    local result = {}
+    for index, name in ipairs(defaults) do
+        result[index] = name
+    end
     return result
 end
 

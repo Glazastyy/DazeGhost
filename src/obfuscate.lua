@@ -6,12 +6,12 @@ local weave = require("src.weave")
 local random128 = require("src.random")
 local compress = require("src.compress")
 local pipeline = require("src.pipeline")
+local names = require("src.names")
+local presets = require("src.presets")
 
 local M = {}
 
 local MASK = 0xFFFFFFFF
-local IDENTIFIER_START = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-local IDENTIFIER_BODY = IDENTIFIER_START .. "0123456789"
 
 local function hash(s)
     local value = 2166136261
@@ -61,24 +61,6 @@ local function identifiers(ast)
         end
     end)
     return used
-end
-
-local function freshName(used, rand)
-    while true do
-        local length = 12 + rand(0, 8)
-        local bytes = {}
-        local firstIndex = rand(1, #IDENTIFIER_START)
-        bytes[1] = IDENTIFIER_START:sub(firstIndex, firstIndex)
-        for index = 2, length do
-            local position = rand(1, #IDENTIFIER_BODY)
-            bytes[index] = IDENTIFIER_BODY:sub(position, position)
-        end
-        local name = table.concat(bytes)
-        if not used[name] then
-            used[name] = true
-            return name
-        end
-    end
 end
 
 local function protectStrings(ast, name, rand)
@@ -188,7 +170,7 @@ local function flattenBlock(block, name, rand)
 end
 
 function M.transform(src, opts)
-    opts = opts or {}
+    opts = presets.apply(opts or {})
     if type(src) ~= "string" then
         error("source must be a string", 2)
     end
@@ -203,19 +185,19 @@ function M.transform(src, opts)
         initial = (opts.seed ~ hash(src)) & MASK
     end
     local rand = random128.new(initial)
+    local nextName = names.new(opts.name_generator, rand, used)
     local context = {
         options = opts,
         rand = rand,
-        freshName = function()
-            return freshName(used, rand)
-        end
+        freshName = nextName,
+        nameGenerator = nextName
     }
     pipeline.run(ast, context, opts.steps)
     if opts.rename_locals ~= false then
         walk(ast, function(node)
             if node.tag == "name" and node.decl and not node.fixed then
                 if not mapping[node.decl] then
-                    mapping[node.decl] = freshName(used, rand)
+                    mapping[node.decl] = nextName()
                 end
                 node.emit = mapping[node.decl]
             end
@@ -223,17 +205,17 @@ function M.transform(src, opts)
     end
     local prefix = ""
     if opts.anti_tamper == true then
-        local guard = freshName(used, rand)
+        local guard = nextName()
         prefix = "local " .. guard .. "=(function()local d=debug;if d and type(d.gethook)=='function' and d.gethook()~=nil then return false end;return true end)();if not " .. guard .. " then error('runtime integrity check failed') end;"
     end
     if opts.encode_strings ~= false then
-        local helper = freshName(used, rand)
+        local helper = nextName()
         if protectStrings(ast, helper, rand) then
             prefix = "local " .. helper .. "=(function()local c,t=string.char,table.concat;return function(s,k)local a={};for i=1,#s do a[i]=c((s:byte(i)~((k+i*73)&255))&255)end;return t(a)end end)();"
         end
     end
     if opts.flatten ~= false then
-        local state = freshName(used, rand)
+        local state = nextName()
         flattenBlock(ast, state, rand)
     end
     local transformed = prefix .. emit.emit(ast)
@@ -245,7 +227,7 @@ function M.transform(src, opts)
 end
 
 function M.obfuscate(src, opts)
-    opts = opts or {}
+    opts = presets.apply(opts or {})
     if type(src) ~= "string" then
         error("source must be a string", 2)
     end

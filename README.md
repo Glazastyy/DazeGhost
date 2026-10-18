@@ -80,6 +80,8 @@ If both `--minify` and `--obfuscate` are supplied, the last operation-selection 
 | `--density N`                 | `100`      | `1` to `100`                       | Percentage of eligible decoy insertion points receiving decoy material.                                                      |
 | `--mode VALUE`                | `bytecode` | `bytecode`, `text`                 | Stores compiled bytecode or transformed source. Bytecode is usually smaller but less portable.                               |
 | `--runtime VALUE`             | `auto`     | `auto`, `linear`, `state`, `table` | Selects the generated dispatcher. `auto` diversifies the dispatcher per build.                                               |
+| `--preset VALUE`              | `balanced` | `compact`, `balanced`, `strong`    | Applies a tested transformation profile. Explicit options always override the preset.                                        |
+| `--name-generator VALUE`      | `random`   | `random`, `compact`, `mangled`     | Selects the generator used for local and generated identifiers.                                                              |
 | `--min-chunk-size N`          | Adaptive   | `1` to `4096`                      | Minimum encrypted data-block size.                                                                                           |
 | `--max-chunk-size N`          | Adaptive   | `1` to `4096`                      | Maximum encrypted data-block size. It must not be smaller than the minimum.                                                  |
 | `--noise-density N`           | `25`       | `0` to `100`                       | Percentage of sealing instructions that receive a noise instruction. Later rounds use a lower adaptive default when omitted. |
@@ -89,7 +91,7 @@ If both `--minify` and `--obfuscate` are supplied, the last operation-selection 
 | `--no-split-strings`          | Disabled   | Flag                               | Disables AST string fragmentation before string sealing.                                                                     |
 | `--no-numbers-to-expressions` | Disabled   | Flag                               | Disables equivalent expressions for eligible integer literals.                                                               |
 | `--no-constant-array`         | Disabled   | Flag                               | Disables the generated indirect constant pool.                                                                               |
-| `--no-proxify-locals`         | Disabled   | Flag                               | Disables proxy indirection for ordinary locals and local functions. Loop and attributed locals remain native.                 |
+| `--no-proxify-locals`         | Disabled   | Flag                               | Disables proxy indirection for ordinary locals and local functions. Loop and attributed locals remain native.                |
 | `--anti-tamper`               | Disabled   | Flag                               | Adds a best-effort runtime hook check and may reject debuggers or profilers.                                                 |
 | `--watermark TEXT`            | Disabled   | Text                               | Adds an encoded runtime watermark check. It is not a cryptographic signature.                                                |
 | `-h`, `--help`                | Disabled   | Flag                               | Prints the command-line summary and exits.                                                                                   |
@@ -144,7 +146,25 @@ The default pipeline runs `split_strings`, `numbers_to_expressions`, `constant_a
 
 Local and generated identifiers use random legal Lua names with variable length and mixed case. The default build obtains fresh 128-bit operating-system entropy, so repeated builds with identical inputs produce different names and different transformation layouts. Supplying `--seed` intentionally makes the identifier sequence and the complete artifact reproducible.
 
+The pipeline exposes three built-in profiles. `compact` prioritizes size and runtime cost, `balanced` enables the normal transformation set, and `strong` enables the normal set plus best-effort runtime hook checks. These profiles are configuration bundles, not security ratings. Explicit options take precedence over profile values.
+
 Library callers can replace the default list with `steps`. Each custom stage receives `(ast, context)` and may mutate the AST in place. The context exposes `options`, `rand`, and `freshName()`.
+
+Stages can also be registered at runtime:
+
+```lua
+local pipeline = require("src.pipeline")
+
+pipeline.register("custom_stage", function(ast, context)
+    context.options.custom_stage_used = true
+end)
+
+local protected = obfuscate.transform(source, {
+    steps = { "custom_stage", "constant_array" }
+})
+```
+
+Name generators are independently replaceable through the `name_generator` option. Custom generators receive the per-build random source and the set of already-used identifiers. Returned values are validated as Lua identifiers and duplicate names are rejected.
 
 ```lua
 local protected = obfuscate.transform(source, {
@@ -451,7 +471,7 @@ For real authorization, licensing, and sensitive business logic, keep the decisi
 | `src/minify.lua`        | Minification API.                                                                                                           |
 | `src/obfuscate.lua`     | Transformation and multi-round orchestration API.                                                                           |
 | `src/pipeline.lua`      | Ordered built-in and custom AST transformation stages.                                                                      |
-| `src/steps/`            | String splitting, numeric expressions, constant pooling, local proxy indirection, and watermark stages.                    |
+| `src/steps/`            | String splitting, numeric expressions, constant pooling, local proxy indirection, and watermark stages.                     |
 | `tests/`                | Semantic, property, runtime, seed, compression, password, native-loader, and integration tests.                             |
 | `CMakeLists.txt`        | Portable CMake build with system-Lua detection and bundled Lua fallback.                                                    |
 

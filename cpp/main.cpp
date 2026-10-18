@@ -19,6 +19,8 @@ struct Options {
     std::string mode = "obfuscate";
     std::string payload_mode = "bytecode";
     std::string runtime = "auto";
+    std::string preset = "balanced";
+    std::string name_generator = "random";
     std::string input;
     std::string decoy = "caos.lua";
     std::string output;
@@ -34,17 +36,26 @@ struct Options {
     std::uint64_t max_output_bytes = 12ULL * 1024ULL * 1024ULL;
     std::uint64_t max_intermediate_bytes = 0;
     bool mix_original = true;
+    bool has_mix_original = false;
     bool flatten = true;
+    bool has_flatten = false;
     bool encode_strings = true;
+    bool has_encode_strings = false;
     bool split_strings = true;
+    bool has_split_strings = false;
     bool numbers_to_expressions = true;
+    bool has_numbers_to_expressions = false;
     bool constant_array = true;
+    bool has_constant_array = false;
     bool proxify_locals = true;
+    bool has_proxify_locals = false;
     bool anti_tamper = false;
+    bool has_anti_tamper = false;
     bool has_watermark = false;
     std::string watermark;
     bool compress = false;
     bool native_loader = false;
+    bool has_name_generator = false;
     bool has_secret = false;
     std::string secret;
     std::string secret_file = "dazeghost.secret.txt";
@@ -92,6 +103,8 @@ static void usage(std::ostream& out) {
         << "  --density N\n"
         << "  --mode bytecode|text\n"
         << "  --runtime auto|linear|state|table\n"
+        << "  --preset compact|balanced|strong\n"
+        << "  --name-generator random|compact|mangled\n"
         << "  --compress\n"
         << "  --native-loader\n"
         << "  --anti-tamper\n"
@@ -171,34 +184,42 @@ static bool parse_arguments(int argc, char** argv, Options& options, bool& anti_
         }
         if (argument == "--no-mix-original") {
             options.mix_original = false;
+            options.has_mix_original = true;
             continue;
         }
         if (argument == "--no-flatten") {
             options.flatten = false;
+            options.has_flatten = true;
             continue;
         }
         if (argument == "--no-encode-strings") {
             options.encode_strings = false;
+            options.has_encode_strings = true;
             continue;
         }
         if (argument == "--no-constant-array") {
             options.constant_array = false;
+            options.has_constant_array = true;
             continue;
         }
         if (argument == "--no-numbers-to-expressions") {
             options.numbers_to_expressions = false;
+            options.has_numbers_to_expressions = true;
             continue;
         }
         if (argument == "--no-split-strings") {
             options.split_strings = false;
+            options.has_split_strings = true;
             continue;
         }
         if (argument == "--no-proxify-locals") {
             options.proxify_locals = false;
+            options.has_proxify_locals = true;
             continue;
         }
         if (argument == "--anti-tamper") {
             options.anti_tamper = true;
+            options.has_anti_tamper = true;
             continue;
         }
         if (argument == "--compress") {
@@ -305,6 +326,17 @@ static bool parse_arguments(int argc, char** argv, Options& options, bool& anti_
         if (argument == "--runtime") {
             if (!next_value(index, argc, argv, value) || (value != "auto" && value != "linear" && value != "state" && value != "table")) return false;
             options.runtime = value;
+            continue;
+        }
+        if (argument == "--preset") {
+            if (!next_value(index, argc, argv, value) || (value != "compact" && value != "balanced" && value != "strong")) return false;
+            options.preset = value;
+            continue;
+        }
+        if (argument == "--name-generator") {
+            if (!next_value(index, argc, argv, value) || (value != "random" && value != "compact" && value != "mangled")) return false;
+            options.name_generator = value;
+            options.has_name_generator = true;
             continue;
         }
         if (!argument.empty() && argument.front() == '-') return false;
@@ -473,21 +505,24 @@ int main(int argc, char** argv) {
         set_integer(state, "decoy_density", options.density);
         set_string(state, "mode", options.payload_mode);
         set_string(state, "runtime", options.runtime);
+        set_string(state, "preset", options.preset);
+        set_string(state, "name_generator", options.name_generator);
         if (options.has_min_chunk_size) set_integer(state, "min_chunk_size", options.min_chunk_size);
         if (options.has_max_chunk_size) set_integer(state, "max_chunk_size", options.max_chunk_size);
         set_integer(state, "noise_density", options.noise_density);
         set_integer(state, "max_output_bytes", static_cast<lua_Integer>(options.max_output_bytes));
         if (options.max_intermediate_bytes != 0) set_integer(state, "max_intermediate_bytes", static_cast<lua_Integer>(options.max_intermediate_bytes));
-        set_boolean(state, "mix_original", options.mix_original);
-        set_boolean(state, "flatten", options.flatten);
-        set_boolean(state, "encode_strings", options.encode_strings);
-        set_boolean(state, "split_strings", options.split_strings);
-        set_boolean(state, "numbers_to_expressions", options.numbers_to_expressions);
-        set_boolean(state, "constant_array", options.constant_array);
-        set_boolean(state, "proxify_locals", options.proxify_locals);
-        set_boolean(state, "anti_tamper", options.anti_tamper);
+        if (options.has_mix_original) set_boolean(state, "mix_original", options.mix_original);
+        if (options.has_flatten) set_boolean(state, "flatten", options.flatten);
+        if (options.has_encode_strings) set_boolean(state, "encode_strings", options.encode_strings);
+        if (options.has_split_strings) set_boolean(state, "split_strings", options.split_strings);
+        if (options.has_numbers_to_expressions) set_boolean(state, "numbers_to_expressions", options.numbers_to_expressions);
+        if (options.has_constant_array) set_boolean(state, "constant_array", options.constant_array);
+        if (options.has_proxify_locals) set_boolean(state, "proxify_locals", options.proxify_locals);
+        if (options.has_anti_tamper) set_boolean(state, "anti_tamper", options.anti_tamper);
         if (options.has_watermark) set_string(state, "watermark", options.watermark);
         if (options.has_seed) set_integer(state, "seed", options.seed);
+        if (options.has_name_generator) set_string(state, "name_generator", options.name_generator);
         if (options.has_secret) set_string(state, "secret", options.secret);
         lua_pushlightuserdata(state, &stage_context);
         lua_pushcclosure(state, stage_writer, 1);

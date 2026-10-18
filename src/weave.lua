@@ -1,23 +1,10 @@
 local parser = require("src.parser")
 local emit = require("src.emit")
 local random128 = require("src.random")
+local names = require("src.names")
 
 local M = {}
 local MASK = 0xFFFFFFFF
-local IDENTIFIER_START = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-local IDENTIFIER_BODY = IDENTIFIER_START .. "0123456789"
-
-local function randomIdentifier(rand)
-    local length = 12 + rand(0, 8)
-    local result = {}
-    local first = rand(1, #IDENTIFIER_START)
-    result[1] = IDENTIFIER_START:sub(first, first)
-    for index = 2, length do
-        local position = rand(1, #IDENTIFIER_BODY)
-        result[index] = IDENTIFIER_BODY:sub(position, position)
-    end
-    return table.concat(result)
-end
 
 local function hash(s)
     local value = 2166136261
@@ -199,13 +186,14 @@ function M.weave(src, opts)
         seed = (opts.seed ~ hash(src) ~ hash(decoy)) & MASK
     end
     local rand = random128.new(seed)
-    local unique = randomIdentifier(rand)
+    local nextName = names.new("random", rand, {})
+    local unique = nextName()
     while src:find(unique, 1, true) or decoy:find(unique, 1, true) do
-        unique = randomIdentifier(rand)
+        unique = nextName()
     end
-    local helper = randomIdentifier(rand)
+    local helper = nextName()
     while src:find(helper, 1, true) or decoy:find(helper, 1, true) or helper == unique do
-        helper = randomIdentifier(rand)
+        helper = nextName()
     end
     local inserted = 0
     local visited = 0
