@@ -5,7 +5,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <random>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -35,6 +37,9 @@ struct Options {
     bool flatten = true;
     bool encode_strings = true;
     bool compress = false;
+    bool has_secret = false;
+    std::string secret;
+    std::string secret_file = "dazeghost.secret.txt";
 };
 
 struct StageContext {
@@ -77,6 +82,8 @@ static void usage(std::ostream& out) {
         << "  --mode bytecode|text\n"
         << "  --runtime auto|linear|state|table\n"
         << "  --compress\n"
+        << "  --secret [VALUE]\n"
+        << "  --secret-file FILE\n"
         << "  --seed N\n"
         << "  --min-chunk-size N --max-chunk-size N\n"
         << "  --noise-density N\n"
@@ -86,6 +93,27 @@ static void usage(std::ostream& out) {
 
 static void status(const std::string& message) {
     std::cerr << "[dazeghost] " << message << '\n';
+}
+
+static std::string generate_secret() {
+    std::random_device source;
+    std::ostringstream value;
+    value << std::hex << std::setfill('0');
+    for (int index = 0; index < 32; ++index) {
+        value << std::setw(2) << (source() & 0xFFU);
+    }
+    return value.str();
+}
+
+static bool save_secret(const fs::path& path, const std::string& secret) {
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) return false;
+    file << secret << '\n';
+    file.close();
+    if (!file) return false;
+    std::error_code error;
+    fs::permissions(path, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace, error);
+    return !error;
 }
 
 static bool parse_unsigned(const std::string& text, std::uint64_t& value) {
@@ -141,6 +169,22 @@ static bool parse_arguments(int argc, char** argv, Options& options, bool& anti_
             continue;
         }
         std::string value;
+        if (argument == "--secret") {
+            options.has_secret = true;
+            if (index + 1 < argc && argv[index + 1][0] != '-') options.secret = argv[++index];
+            continue;
+        }
+        if (argument.rfind("--secret=", 0) == 0) {
+            options.has_secret = true;
+            options.secret = argument.substr(9);
+            if (options.secret.empty()) return false;
+            continue;
+        }
+        if (argument == "--secret-file") {
+            if (!next_value(index, argc, argv, value)) return false;
+            options.secret_file = value;
+            continue;
+        }
         if (argument == "-i" || argument == "--input") {
             if (!next_value(index, argc, argv, value)) return false;
             options.input = value;
@@ -281,6 +325,18 @@ int main(int argc, char** argv) {
         return 2;
     }
     status(options.mode == "minify" ? "Starting minification." : "Starting obfuscation.");
+    if (options.has_secret) {
+        if (options.secret.empty()) {
+            options.secret = generate_secret();
+            if (!save_secret(options.secret_file, options.secret)) {
+                std::cerr << "cannot save generated secret\n";
+                return 1;
+            }
+            status("Generated a runtime secret and saved it to: " + options.secret_file);
+        } else {
+            status("Using the supplied runtime secret without displaying it.");
+        }
+    }
     status("Reading input: " + options.input);
     const std::string source = slurp(options.input);
     if (source.empty() && !fs::exists(options.input)) {
@@ -334,6 +390,7 @@ int main(int argc, char** argv) {
         set_boolean(state, "flatten", options.flatten);
         set_boolean(state, "encode_strings", options.encode_strings);
         if (options.has_seed) set_integer(state, "seed", options.seed);
+        if (options.has_secret) set_string(state, "secret", options.secret);
         lua_pushlightuserdata(state, &stage_context);
         lua_pushcclosure(state, stage_writer, 1);
         lua_setfield(state, -2, "stage_writer");

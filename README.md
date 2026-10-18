@@ -1,66 +1,231 @@
 # DazeGhost
 
-DazeGhost is a Lua 5.4 minifier and obfuscator with a C++17 command-line interface. The pipeline is lexer, parser, lexical binding, transformation, emission, sealing, and optional final packing.
+DazeGhost is a Lua 5.4 source transformer, minifier, obfuscator, and single-file packer. The supported command-line interface is a C++17 executable that embeds Lua 5.4 and loads the transformation engine from this repository.
 
-## Requirements
+This project provides distribution hardening and raises the cost of casual inspection. It is not a server-side authorization system, a hardware security boundary, or a guarantee of secrecy against the owner of the execution machine.
 
-- Lua 5.4
-- CMake 3.16 or newer
-- A C++17 compiler
-- Network access during the first CMake configuration when no compatible system Lua 5.4 is available
+## Requirements and build
 
-The build first looks for a matching system Lua 5.4 installation. If it is unavailable, CMake downloads the pinned official Lua 5.4 source, verifies its SHA-256 hash, and builds it privately as a static library. A custom compatible installation can be selected with `-DDAZEGHOST_LUA_INCLUDE_DIR=/path/include -DDAZEGHOST_LUA_LIBRARY=/path/lib/liblua5.4.so`.
+The normal build requires CMake 3.16 or newer, a C++17 compiler, and network access during the first configure when a compatible system Lua 5.4 installation is unavailable.
 
-## Build
+Lua development headers and a system library are optional. CMake first checks for a matching system Lua 5.4 installation. If none is available, it downloads the pinned official Lua 5.4 source, verifies its SHA-256 hash, and builds Lua privately as a static library. This prevents incompatible Lua headers and libraries from being combined.
 
 ```bash
 cmake -B build -S .
 cmake --build build
+./dazeghost --help
 ```
 
-The executable is generated at the project root as `./dazeghost`. It locates Lua modules next to the executable, one directory above it, through `DAZEGHOST_ROOT`, or from the current directory.
+The executable is written to the project root. The `build/` directory contains intermediate files and the root executable is ignored by Git.
 
-## Usage
+To force the bundled Lua build:
 
 ```bash
-./dazeghost --minify -o minified.lua script.lua
-./dazeghost --obfuscate --anti-ia -i script.lua -d caos.lua -o protected.lua
-./dazeghost --obfuscate --anti-ia --rounds 5 --density 70 --compress -i script.lua -d caos.lua -o protected.lua
+cmake -B build -S . -DDAZEGHOST_USE_SYSTEM_LUA=OFF
+cmake --build build
 ```
 
-Use `--help` for the complete option list. The C++ executable is the supported command-line entry point; no Lua generator script is required.
+To select a compatible custom Lua 5.4 installation:
 
-## Obfuscation
+```bash
+cmake -B build -S . \
+  -DDAZEGHOST_LUA_INCLUDE_DIR=/path/to/lua/include \
+  -DDAZEGHOST_LUA_LIBRARY=/path/to/lua/lib/liblua5.4.so
+cmake --build build
+```
 
-The obfuscator renames eligible locals, encodes string literals, applies conservative control-flow transformations, mixes optional decoy fragments, and seals each round with a keyed ARX stream mixer, shuffled blocks, multiple runtime dispatchers, and an integrity check.
+The include directory and library must come from the same Lua 5.4 installation. Lua 5.5 headers cannot be combined with a Lua 5.4 library.
 
-The loader splits key material into shares and reconstructs it at runtime. This is obfuscation, not secret storage. A self-contained loader cannot hide a secret from an analyst who can execute it. Sensitive decisions and secrets must remain server-side.
+## Command-line interface
 
-The `--anti-ia` mode adds inactive structural decoys. The decoy source is parsed but never executed during generation.
+```text
+./dazeghost [options] file.lua
+```
 
-Builds without `--seed` use fresh 128-bit operating-system entropy. This changes the actual layout and runtime material, not only the output hash. Supplying `--seed` enables reproducible builds.
+The default operation is obfuscation. A positional input file or `--input` may be used. Progress messages are written to standard error, so generated Lua written to standard output remains valid.
 
-## Rounds and memory
+Examples:
 
-Rounds are limited to 1 through 5. Later rounds use larger data blocks and less sealing noise by default to control growth while preserving independent randomization.
+```bash
+./dazeghost --minify -i script.lua -o minified.lua
+./dazeghost --obfuscate --anti-ia -i script.lua -d caos.lua -o protected.lua
+./dazeghost --obfuscate --rounds 3 --density 70 --compress \
+  -i script.lua -d caos.lua -o protected.lua
+```
 
-The C++ CLI passes each round through the staged obfuscation API. The current round is the only round retained by the transformation pipeline; the parser, Lua compiler, and sealing stage still require the current source as a complete string.
+Run `./dazeghost --help` for the compact built-in help.
 
-`--max-output-bytes` defaults to 12 MiB. `--max-intermediate-bytes` defaults to the larger of eight times that limit and 64 MiB. Both limits fail closed before an uncontrolled output is produced.
+## Complete option reference
 
-## Final packing
+### Operation, input, and output
 
-`--compress` applies the final LZ-style packer after obfuscation. The packed bytes are embedded directly as an escaped Lua binary literal; the output does not use Base64. The generated single-file loader validates an FNV-1a integrity checksum, decompresses the stream with overlap-safe back references, loads the recovered Lua chunk, and executes it.
+| Option | Default | Description |
+| --- | --- | --- |
+| `--minify` | Obfuscation | Parses Lua 5.4 and emits compact equivalent source. |
+| `--obfuscate` | Enabled | Runs transformation, sealing, and loader generation. |
+| `--anti-ia` | Disabled | Adds inactive structural decoy material. |
+| `-i`, `--input FILE` | Positional input | Reads the complete Lua source from `FILE`. |
+| `-d`, `--decoy FILE` | `caos.lua` | Reads decoy Lua source. It is parsed but never executed during generation. |
+| `-o`, `--output FILE` | Standard output | Writes the generated Lua artifact to `FILE`. |
 
-The packed loader replaces the original output only when it is smaller. This prevents a compression request from increasing the artifact because of loader overhead.
+If both `--minify` and `--obfuscate` are supplied, the last operation-selection option wins.
 
-The library interfaces are:
+### Transformation and sealing
+
+| Option | Default | Valid range | Description |
+| --- | --- | --- | --- |
+| `--rounds N` | `1` | `1` to `5` | Complete sealing rounds. Size and generation cost grow substantially with each round. |
+| `--density N` | `100` | `1` to `100` | Percentage of eligible decoy insertion points receiving decoy material. |
+| `--mode VALUE` | `bytecode` | `bytecode`, `text` | Stores compiled bytecode or transformed source. Bytecode is usually smaller but less portable. |
+| `--runtime VALUE` | `auto` | `auto`, `linear`, `state`, `table` | Selects the generated dispatcher. `auto` diversifies the dispatcher per build. |
+| `--min-chunk-size N` | Adaptive | `1` to `4096` | Minimum encrypted data-block size. |
+| `--max-chunk-size N` | Adaptive | `1` to `4096` | Maximum encrypted data-block size. It must not be smaller than the minimum. |
+| `--noise-density N` | `25` | `0` to `100` | Percentage of sealing instructions that receive a noise instruction. Later rounds use a lower adaptive default when omitted. |
+| `--no-mix-original` | Disabled | Flag | Excludes original-source fragments from later decoy rounds. |
+| `--no-flatten` | Disabled | Flag | Disables conservative control-flow flattening. |
+| `--no-encode-strings` | Disabled | Flag | Keeps string literals in emitted form. |
+| `-h`, `--help` | Disabled | Flag | Prints the command-line summary and exits. |
+
+### Reproducibility, limits, and packing
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--seed N` | Fresh entropy | Uses an integer seed for reproducible generation. Without it, fresh 128-bit operating-system entropy is used. |
+| `--max-output-bytes N` | `12582912` | Maximum output of every sealing round. The operation fails when exceeded. |
+| `--max-intermediate-bytes N` | `max(8 * output, 67108864)` | Maximum transformed intermediate source size. |
+| `--compress` | Disabled | Runs the final LZ-style packer and keeps its loader only when it is smaller. |
+
+### Runtime secret
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--secret VALUE` | Disabled | Enables runtime password protection using `VALUE`. It is never printed. |
+| `--secret=VALUE` | Disabled | Equivalent form that avoids ambiguity with positional arguments. |
+| `--secret` | Disabled | Generates a fresh secret and saves it to `dazeghost.secret.txt`. |
+| `--secret-file FILE` | `dazeghost.secret.txt` | Destination for a generated secret. |
+
+For explicit secrets, prefer `--secret=VALUE` or use `--input`, because an optional argument is ambiguous with a positional input path.
+
+## Common workflows
+
+### Minification
+
+```bash
+./dazeghost --minify --input script.lua --output minified.lua
+```
+
+Minification does not encrypt, seal, pack, or prompt for a password.
+
+### Decoy-assisted obfuscation
+
+```bash
+./dazeghost --obfuscate --anti-ia \
+  --input script.lua \
+  --decoy caos.lua \
+  --rounds 3 \
+  --density 70 \
+  --output protected.lua
+```
+
+The decoy file is parsed as data and never executed during generation.
+
+### Reproducible generation
+
+```bash
+./dazeghost --obfuscate --seed 123456789 \
+  --input script.lua --output protected.lua
+```
+
+The same source, decoy content, options, and seed produce the same artifact. Omitting the seed changes the actual layout and runtime material, not only the file hash.
+
+### Generated runtime secret
+
+```bash
+./dazeghost --obfuscate --secret \
+  --secret-file release.secret.txt \
+  --input script.lua --output protected.lua
+```
+
+The secret file is created with owner read/write permissions where supported. Keep it separate from the artifact:
+
+```bash
+chmod 600 release.secret.txt
+secret=$(cat release.secret.txt)
+echo "$secret" | lua5.4 protected.lua
+```
+
+The loader asks for the secret before decrypting the payload. A wrong secret aborts execution. The generated secret is not written into the Lua file.
+
+### Supplied runtime secret
+
+```bash
+./dazeghost --obfuscate \
+  --secret='correct horse battery staple' \
+  --input script.lua --output protected.lua
+```
+
+Avoid shell history, process listings, CI logs, and public command output when handling sensitive values.
+
+### Final packing
+
+```bash
+./dazeghost --obfuscate --compress \
+  --input script.lua --output protected.lua
+```
+
+Packing is attempted after all requested rounds. Because the loader has overhead, the packed form is selected only when its complete size is smaller.
+
+## Runtime password protection
+
+The password option is a runtime access gate and key-diversification layer:
+
+1. The generator derives per-layer material from the supplied or generated secret.
+2. The secret itself is not emitted into the loader.
+3. The loader asks for the secret before reconstructing the payload key.
+4. The entered value is checked before payload execution.
+5. A process-global cache avoids repeated prompts through nested sealing layers.
+
+The loader requires `io.read` and standard input. For non-interactive use, provide the secret through a controlled pipe. Do not log or expose it.
+
+This is not a hardware-backed key store or a guarantee against a hostile machine owner. An analyst can patch the check, instrument the loader, inspect memory after decryption, or capture the entered secret.
+
+## Rounds, staging, and memory
+
+The C++ CLI registers a stage callback for obfuscation. After each round, the current output is written to a temporary stage file, read for the next round, and removed. Historical round outputs are not retained as a collection.
+
+The parser, transformer, Lua compiler, and sealing stage still operate on the current source as a complete string. Staging limits retained historical output and provides a file boundary; it does not make the individual parser or compiler streaming.
+
+Later rounds use larger blocks and lower sealing-noise defaults when these values are not explicitly provided. This controls growth while preserving independent randomization.
+
+Recommended starting points:
+
+```bash
+./dazeghost --obfuscate --rounds 1 -i script.lua -o protected.lua
+./dazeghost --obfuscate --rounds 3 --density 50 -i script.lua -o protected.lua
+./dazeghost --obfuscate --rounds 5 --density 25 \
+  --max-output-bytes 33554432 -i script.lua -o protected.lua
+```
+
+Increase output limits deliberately and monitor memory for large five-round inputs.
+
+## Final packing format
+
+`src.compress` uses an LZ-style stream with literal records and overlap-safe back references. Packed bytes are embedded directly as an escaped Lua binary literal. The output does not use Base64 or an external decompression library.
+
+The generated loader decodes the literal, validates record boundaries and distances, reconstructs the original Lua chunk, checks an FNV-1a integrity value, loads the recovered chunk, and executes it.
+
+The checksum detects corruption and basic tampering. It is not a digital signature and does not establish publisher authenticity.
+
+## Lua library API
 
 ```lua
+package.path = "./?.lua;" .. package.path
+
 local minify = require("src.minify")
 local obfuscate = require("src.obfuscate")
 local compress = require("src.compress")
 
+local source = "return 6 * 7"
 local compact = minify.minify(source)
 local protected = obfuscate.obfuscate(source, {
     anti_ia = true,
@@ -68,12 +233,88 @@ local protected = obfuscate.obfuscate(source, {
     rounds = 3,
     decoy_density = 70,
     mode = "bytecode",
-    runtime = "auto"
+    runtime = "auto",
+    seed = 1234,
+    secret = "runtime secret"
 })
-local single_file = compress.wrap(protected)
+local packed_loader = compress.wrap(protected)
 ```
 
-## Tests
+### `src.minify`
+
+```lua
+local minify = require("src.minify")
+local result = minify.minify(source)
+```
+
+This parses and re-emits compact Lua. It does not provide secrecy.
+
+### `src.obfuscate`
+
+```lua
+local obfuscate = require("src.obfuscate")
+local result = obfuscate.obfuscate(source, options)
+```
+
+Important options include `anti_ia`, `decoy_src`, `decoy_path`, `rounds`, `mix_original`, `decoy_density`, `max_decoy_fragments`, `flatten`, `rename_locals`, `encode_strings`, `min_chunk_size`, `max_chunk_size`, `noise_density`, `strip`, `mode`, `runtime`, `seed`, `secret`, `max_output_bytes`, `max_intermediate_bytes`, `compress_rounds`, and `stage_writer`.
+
+`stage_writer` receives `(data, round)` and must return the string passed into the next round. The C++ CLI supplies this callback to provide staged file boundaries.
+
+### `src.crypt`
+
+```lua
+local crypt = require("src.crypt")
+local loader = crypt.seal(source, {
+    mode = "text",
+    runtime = "state",
+    secret = "runtime secret"
+})
+```
+
+`crypt.seal` creates one protected loader layer. It validates the source before sealing. The generated loader reconstructs its payload and invokes Lua's loader for the selected mode.
+
+### `src.compress`
+
+```lua
+local compress = require("src.compress")
+local packed = compress.pack(data)
+local restored = compress.unpack(packed)
+local loader = compress.wrap(data)
+```
+
+`pack` and `unpack` operate on byte strings. `wrap` creates a self-contained loader with integrity validation.
+
+## Architecture
+
+```text
+C++ CLI
+  ├─ argument validation and progress reporting
+  ├─ filesystem input, output, and secret handling
+  ├─ per-round stage callback
+  └─ embedded Lua 5.4 runtime
+       ├─ lexer
+       ├─ parser
+       ├─ lexical binder
+       ├─ decoy weaver
+       ├─ source transformer
+       ├─ compact emitter
+       ├─ sealing runtime generator
+       └─ final LZ-style packer
+```
+
+The C++ executable is the supported user-facing entry point. Lua modules remain separate so transformation rules can be tested independently from the process wrapper.
+
+## Validation
+
+Lua syntax checks:
+
+```bash
+for file in src/*.lua tests/*.lua tests/cli/run.lua; do
+  luac5.4 -p "$file"
+done
+```
+
+Complete Lua suite:
 
 ```bash
 lua5.4 tests/test.lua
@@ -84,12 +325,66 @@ lua5.4 tests/text.lua
 lua5.4 tests/runtime.lua
 lua5.4 tests/seed.lua
 lua5.4 tests/compress.lua
+lua5.4 tests/password.lua
 lua5.4 tests/cli/run.lua
 ```
 
-## Limitations
+C++ smoke test:
 
-DazeGhost does not provide complete Lua virtual-machine virtualization, anti-debugging, or cryptographic secrecy. The runtime eventually reconstructs the payload and passes it to `load`. Inactive decoys can be removed by dynamic analysis, and the integrity checksum is not an authenticated signature. Evaluate the protection against the actual reverse-engineering threat model and runtime environment.
+```bash
+cmake -B build -S .
+cmake --build build
+./dazeghost --help
+./dazeghost --obfuscate --mode text \
+  --input script.lua --output /tmp/protected.lua
+lua5.4 /tmp/protected.lua
+```
+
+## Security model and limitations
+
+### Self-contained loaders cannot provide perfect secrecy
+
+If a loader can decrypt and execute a payload on a host controlled by the analyst, the analyst can eventually observe the key, plaintext, or execution state. Runtime password protection raises the cost of casual extraction but cannot create a trust boundary on an untrusted machine.
+
+### No complete Lua virtual machine
+
+DazeGhost currently uses Lua's normal loader for the recovered payload. It does not implement a complete replacement Lua 5.4 virtual machine and does not currently split unsupported AST regions into independently virtualized and native-executed segments.
+
+### No guaranteed anti-debugging
+
+The current release does not provide a complete anti-debugging system. Host-controlled processes can be traced, paused, instrumented, modified, or run under another Lua runtime.
+
+### Integrity is not authenticity
+
+The FNV-1a checksum detects corruption but is not a digital signature. It does not prove publisher authenticity and cannot prevent modification of the loader itself.
+
+### Bytecode compatibility
+
+`bytecode` mode depends on Lua 5.4 bytecode compatibility, including platform characteristics and build configuration. Use `text` mode when portability across Lua 5.4 installations matters more than size.
+
+### Decoys are not executable protection
+
+Decoy material increases structural noise but can be identified and removed through dynamic execution, control-flow analysis, or instrumentation. The decoy input is intentionally not executed during generation.
+
+For real authorization, licensing, and sensitive business logic, keep the decision or computation on a server or inside a separately secured native component.
+
+## Repository layout
+
+| Path | Purpose |
+| --- | --- |
+| `cpp/main.cpp` | C++17 CLI, embedded Lua runtime, progress reporting, staging, and secret-file handling. |
+| `src/lexer.lua` | Lua 5.4 lexer. |
+| `src/parser.lua` | Recursive-descent and Pratt parser. |
+| `src/bind.lua` | Lexical scope binding. |
+| `src/emit.lua` | Compact Lua source emitter. |
+| `src/weave.lua` | Conservative decoy weaving. |
+| `src/crypt.lua` | Payload sealing and runtime loader generation. |
+| `src/compress.lua` | LZ-style packing and single-file loader generation. |
+| `src/random.lua` | 128-bit random-state initialization. |
+| `src/minify.lua` | Minification API. |
+| `src/obfuscate.lua` | Transformation and multi-round orchestration API. |
+| `tests/` | Semantic, property, runtime, seed, compression, password, and integration tests. |
+| `CMakeLists.txt` | Portable CMake build with system-Lua detection and bundled Lua fallback. |
 
 ## License
 
