@@ -1,5 +1,8 @@
 #include <lua.hpp>
+#include <openssl/evp.h>
 
+#include <array>
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -10,6 +13,14 @@ namespace fs = std::filesystem;
 
 static constexpr char magic[] = "DGNATIVE54";
 static constexpr std::size_t magic_size = sizeof(magic) - 1;
+static constexpr char binding_magic[] = "DGVMSEPARATE54";
+static constexpr std::size_t binding_magic_size = sizeof(binding_magic) - 1;
+static constexpr std::size_t digest_size = 32;
+
+struct Binding {
+    std::string filename;
+    std::array<unsigned char, digest_size> digest{};
+};
 
 static bool read_u64_le(std::istream& input, std::uint64_t& value) {
     char bytes[sizeof(value)];
@@ -41,6 +52,50 @@ static bool read_payload(const fs::path& executable, std::string& payload) {
     return static_cast<bool>(file);
 }
 
+static bool read_bytes(const fs::path& path, std::string& content) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return false;
+    file.seekg(0, std::ios::end);
+    const std::streamoff size = file.tellg();
+    if (size < 0) return false;
+    file.seekg(0, std::ios::beg);
+    content.resize(static_cast<std::size_t>(size));
+    file.read(content.data(), static_cast<std::streamsize>(content.size()));
+    return static_cast<bool>(file) || content.empty();
+}
+
+static bool sha256(const std::string& content, std::array<unsigned char, digest_size>& digest) {
+    EVP_MD_CTX* context = EVP_MD_CTX_new();
+    if (!context) return false;
+    unsigned int length = 0;
+    const bool initialized = EVP_DigestInit_ex(context, EVP_sha256(), nullptr) == 1;
+    const bool updated = initialized && EVP_DigestUpdate(context, content.data(), content.size()) == 1;
+    const bool finalized = updated && EVP_DigestFinal_ex(context, digest.data(), &length) == 1;
+    EVP_MD_CTX_free(context);
+    return finalized && length == digest_size;
+}
+
+static bool read_binding(const fs::path& executable, Binding& binding) {
+    std::string file;
+    if (!read_bytes(executable, file)) return false;
+    const std::size_t minimum = binding_magic_size + digest_size + sizeof(std::uint64_t) + 1;
+    if (file.size() < minimum) return false;
+    if (file.compare(file.size() - binding_magic_size, binding_magic_size, binding_magic) != 0) return false;
+    const std::size_t digest_offset = file.size() - binding_magic_size - digest_size;
+    std::copy_n(reinterpret_cast<const unsigned char*>(file.data() + digest_offset), digest_size, binding.digest.begin());
+    const std::size_t size_offset = digest_offset - sizeof(std::uint64_t);
+    std::uint64_t filename_size = 0;
+    for (std::size_t index = 0; index < sizeof(filename_size); ++index) {
+        filename_size |= static_cast<std::uint64_t>(static_cast<unsigned char>(file[size_offset + index])) << (index * 8);
+    }
+    if (filename_size == 0 || filename_size > size_offset) return false;
+    const std::size_t filename_offset = size_offset - static_cast<std::size_t>(filename_size);
+    binding.filename.assign(file.data() + filename_offset, static_cast<std::size_t>(filename_size));
+    const fs::path candidate(binding.filename);
+    if (candidate.empty() || candidate.has_parent_path() || candidate.filename() != candidate) return false;
+    return true;
+}
+
 static fs::path executable_path(const char* argument) {
     std::error_code error;
     return fs::absolute(argument, error);
@@ -62,7 +117,27 @@ static int native_load(lua_State* state) {
 int main(int argc, char** argv) {
     const fs::path executable = executable_path(argc > 0 ? argv[0] : "dazeghost-loader");
     std::string payload;
-    if (!read_payload(executable, payload)) {
+    Binding binding;
+    std::string executable_bytes;
+    const bool has_binding = read_bytes(executable, executable_bytes)
+        && executable_bytes.size() >= binding_magic_size
+        && executable_bytes.compare(executable_bytes.size() - binding_magic_size, binding_magic_size, binding_magic) == 0;
+    if (has_binding) {
+        if (argc != 1 || !read_binding(executable, binding)) {
+            std::cerr << "invalid DazeGhost separated VM binding\n";
+            return 1;
+        }
+        const fs::path artifact = executable.parent_path() / binding.filename;
+        if (!read_bytes(artifact, payload)) {
+            std::cerr << "bound DazeGhost artifact is unavailable\n";
+            return 1;
+        }
+        std::array<unsigned char, digest_size> actual{};
+        if (!sha256(payload, actual) || actual != binding.digest) {
+            std::cerr << "bound DazeGhost artifact failed integrity validation\n";
+            return 1;
+        }
+    } else if (!read_payload(executable, payload)) {
         std::cerr << "invalid DazeGhost native loader payload\n";
         return 1;
     }

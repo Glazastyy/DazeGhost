@@ -1,5 +1,7 @@
 #include <lua.hpp>
+#include <openssl/evp.h>
 
+#include <array>
 #include <charconv>
 #include <cstdint>
 #include <cstdlib>
@@ -24,6 +26,7 @@ struct Options {
     std::string input;
     std::string decoy = "caos.lua";
     std::string output;
+    std::string vm_output;
     std::uint32_t rounds = 1;
     std::uint32_t density = 100;
     std::uint32_t seed = 0;
@@ -67,6 +70,9 @@ struct StageContext {
 
 static constexpr char native_magic[] = "DGNATIVE54";
 static constexpr std::size_t native_magic_size = sizeof(native_magic) - 1;
+static constexpr char separate_vm_magic[] = "DGVMSEPARATE54";
+static constexpr std::size_t separate_vm_magic_size = sizeof(separate_vm_magic) - 1;
+static constexpr std::size_t sha256_size = 32;
 
 static int stage_writer(lua_State* state) {
     auto* context = static_cast<StageContext*>(lua_touserdata(state, lua_upvalueindex(1)));
@@ -107,6 +113,7 @@ static void usage(std::ostream& out) {
         << "  --name-generator random|compact|mangled\n"
         << "  --compress\n"
         << "  --native-loader\n"
+        << "  --separate-vm FILE\n"
         << "  --anti-tamper\n"
         << "  --watermark TEXT\n"
         << "  --no-constant-array --no-numbers-to-expressions --no-split-strings\n"
@@ -169,6 +176,7 @@ static bool assign_unsigned(const std::string& text, std::uint64_t maximum, std:
 static bool parse_arguments(int argc, char** argv, Options& options, bool& anti_ia, bool& show_help) {
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
+        std::string value;
         if (argument == "-h" || argument == "--help") {
             usage(std::cout);
             show_help = true;
@@ -230,7 +238,11 @@ static bool parse_arguments(int argc, char** argv, Options& options, bool& anti_
             options.native_loader = true;
             continue;
         }
-        std::string value;
+        if (argument == "--separate-vm" || argument == "--vm-output") {
+            if (!next_value(index, argc, argv, value)) return false;
+            options.vm_output = value;
+            continue;
+        }
         if (argument == "--secret") {
             options.has_secret = true;
             if (index + 1 < argc && argv[index + 1][0] != '-') options.secret = argv[++index];
@@ -383,6 +395,43 @@ static bool append_native_payload(const fs::path& loader, const fs::path& output
     return !error;
 }
 
+static bool sha256(const std::string& content, std::array<unsigned char, sha256_size>& digest) {
+    EVP_MD_CTX* context = EVP_MD_CTX_new();
+    if (!context) return false;
+    unsigned int length = 0;
+    const bool initialized = EVP_DigestInit_ex(context, EVP_sha256(), nullptr) == 1;
+    const bool updated = initialized && EVP_DigestUpdate(context, content.data(), content.size()) == 1;
+    const bool finalized = updated && EVP_DigestFinal_ex(context, digest.data(), &length) == 1;
+    EVP_MD_CTX_free(context);
+    return finalized && length == sha256_size;
+}
+
+static bool append_separate_vm(const fs::path& loader, const fs::path& output, const fs::path& artifact, const std::string& payload) {
+    const std::string loader_bytes = slurp(loader);
+    if (loader_bytes.empty()) return false;
+    const std::string filename = artifact.filename().generic_string();
+    if (filename.empty()) return false;
+    std::array<unsigned char, sha256_size> digest{};
+    if (!sha256(payload, digest)) return false;
+    std::ofstream file(output, std::ios::binary | std::ios::trunc);
+    if (!file) return false;
+    file.write(loader_bytes.data(), static_cast<std::streamsize>(loader_bytes.size()));
+    file.write(filename.data(), static_cast<std::streamsize>(filename.size()));
+    write_u64_le(file, static_cast<std::uint64_t>(filename.size()));
+    file.write(reinterpret_cast<const char*>(digest.data()), static_cast<std::streamsize>(digest.size()));
+    file.write(separate_vm_magic, static_cast<std::streamsize>(separate_vm_magic_size));
+    file.close();
+    if (!file) return false;
+    std::error_code error;
+    fs::permissions(output,
+        fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec |
+        fs::perms::group_read | fs::perms::group_exec |
+        fs::perms::others_read | fs::perms::others_exec,
+        fs::perm_options::replace,
+        error);
+    return !error;
+}
+
 static fs::path find_root(const fs::path& argv0) {
     std::vector<fs::path> candidates;
     std::error_code error;
@@ -442,6 +491,18 @@ int main(int argc, char** argv) {
     }
     if (options.native_loader && options.mode != "obfuscate") {
         std::cerr << "--native-loader requires --obfuscate\n";
+        return 2;
+    }
+    if (!options.vm_output.empty() && options.mode != "obfuscate") {
+        std::cerr << "--separate-vm requires --obfuscate\n";
+        return 2;
+    }
+    if (options.native_loader && !options.vm_output.empty()) {
+        std::cerr << "--native-loader and --separate-vm cannot be combined\n";
+        return 2;
+    }
+    if (!options.vm_output.empty() && options.output.empty()) {
+        std::cerr << "--separate-vm requires --output\n";
         return 2;
     }
     if (options.native_loader && !options.has_secret) {
@@ -603,6 +664,22 @@ int main(int argc, char** argv) {
         return 1;
     }
     file.write(result.data(), static_cast<std::streamsize>(result.size()));
-    if (file) status("Completed: " + std::to_string(result.size()) + " bytes written.");
-    return file ? 0 : 1;
+    if (!file) return 1;
+    file.close();
+    if (!file) return 1;
+    status("Completed: " + std::to_string(result.size()) + " bytes written.");
+    if (!options.vm_output.empty()) {
+        const fs::path loader = find_root(argv[0]) / "dazeghost-loader";
+        if (!fs::exists(loader)) {
+            std::cerr << "native VM executable is not available; build dazeghost-loader first\n";
+            return 1;
+        }
+        status("Creating the artifact-bound native VM.");
+        if (!append_separate_vm(loader, options.vm_output, fs::path(options.output), result)) {
+            std::cerr << "cannot create the artifact-bound native VM\n";
+            return 1;
+        }
+        status("Completed separate VM: " + std::to_string(fs::file_size(options.vm_output)) + " bytes written.");
+    }
+    return 0;
 }

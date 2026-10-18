@@ -6,7 +6,9 @@ This project provides distribution hardening and raises the cost of casual inspe
 
 ## Requirements and build
 
-The normal build requires CMake 3.16 or newer, a C++17 compiler, and network access during the first configure when a compatible system Lua 5.4 installation is unavailable.
+The normal build requires CMake 3.16 or newer, a C++17 compiler, OpenSSL Crypto development files, and network access during the first configure when a compatible system Lua 5.4 installation is unavailable.
+
+Native executables are stripped of symbol tables and built with native hardening flags by default. Set `-DDAZEGHOST_STRIP_SYMBOLS=OFF` or `-DDAZEGHOST_HARDEN_NATIVE=OFF` when debugging the C++ loader or generator.
 
 Lua development headers and a system library are optional. CMake first checks for a matching system Lua 5.4 installation. If none is available, it downloads the pinned official Lua 5.4 source, verifies its SHA-256 hash, and builds Lua privately as a static library. This prevents incompatible Lua headers and libraries from being combined.
 
@@ -105,6 +107,7 @@ If both `--minify` and `--obfuscate` are supplied, the last operation-selection 
 | `--max-intermediate-bytes N` | `max(8 * output, 67108864)` | Maximum transformed intermediate source size.                                                                                             |
 | `--compress`                 | Disabled                    | Runs the final LZ-style packer and keeps its loader only when it is smaller.                                                              |
 | `--native-loader`            | Disabled                    | Embeds the final protected Lua payload into the native `dazeghost-loader` executable. Requires `--obfuscate`, `--secret`, and `--output`. |
+| `--separate-vm FILE`         | Disabled                    | Writes the protected artifact to `--output` and creates an adjacent native VM bound to that exact artifact. Requires `--obfuscate` and `--output`. |
 
 ### Runtime secret
 
@@ -248,6 +251,28 @@ printf '%s\n' "$secret" | ./protected
 `--native-loader` requires a secret because the native artifact is intended to be a password-gated distribution unit. The generator fails early if the native template is unavailable or if an output path is not supplied.
 
 The native loader registers `dazeghost_load` inside the embedded VM. Protected layers use this C++ loading boundary when it exists and fall back to Lua's `load` for regular `.lua` output. This removes the most obvious Lua-level load hook from native execution while preserving compatibility with ordinary Lua loaders.
+
+### Separate artifact-bound VM
+
+```bash
+./dazeghost --obfuscate --mode text \
+  --input script.lua \
+  --output protected.lua \
+  --separate-vm protected-vm
+```
+
+This mode produces two files:
+
+- `protected.lua`: the protected Lua artifact;
+- `protected-vm`: a native Lua 5.4 VM bound to that artifact.
+
+The VM does not accept a payload path or alternate input. It resolves only the artifact with the recorded filename beside itself, verifies its SHA-256 digest, and aborts if the artifact is missing, renamed, replaced, or modified. The binding metadata is appended to the native executable and the VM is executable without a separate Lua installation.
+
+The VM is bound to the artifact contents, not merely to its filename. Moving both files together is supported; changing either file invalidates the relationship. This is an artifact-integrity and distribution-binding mechanism, not a guarantee against a user who controls the VM process and can patch or instrument it.
+
+The separated VM uses OpenSSL's SHA-256 implementation and therefore requires a compatible OpenSSL Crypto runtime on the target system unless the project is linked against a static deployment of that library.
+
+`--separate-vm` and `--native-loader` are mutually exclusive. The separate mode keeps the protected artifact outside the executable, while the single-file mode embeds it inside the executable.
 
 ## Runtime password protection
 
@@ -458,8 +483,8 @@ For real authorization, licensing, and sensitive business logic, keep the decisi
 
 | Path                    | Purpose                                                                                                                     |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `cpp/main.cpp`          | C++17 generator CLI, embedded Lua runtime, progress reporting, staging, secret-file handling, and native payload packaging. |
-| `cpp/native_loader.cpp` | Native single-file loader that embeds the complete Lua 5.4 VM and executes an appended protected payload.                   |
+| `cpp/main.cpp`          | C++17 generator CLI, embedded Lua runtime, progress reporting, staging, secret-file handling, and native VM packaging.     |
+| `cpp/native_loader.cpp` | Native Lua 5.4 VM supporting embedded payloads and artifact-bound separated execution.                                  |
 | `src/lexer.lua`         | Lua 5.4 lexer.                                                                                                              |
 | `src/parser.lua`        | Recursive-descent and Pratt parser.                                                                                         |
 | `src/bind.lua`          | Lexical scope binding.                                                                                                      |
@@ -472,7 +497,7 @@ For real authorization, licensing, and sensitive business logic, keep the decisi
 | `src/obfuscate.lua`     | Transformation and multi-round orchestration API.                                                                           |
 | `src/pipeline.lua`      | Ordered built-in and custom AST transformation stages.                                                                      |
 | `src/steps/`            | String splitting, numeric expressions, constant pooling, local proxy indirection, and watermark stages.                     |
-| `tests/`                | Semantic, property, runtime, seed, compression, password, native-loader, and integration tests.                             |
+| `tests/`                | Semantic, property, runtime, seed, compression, password, native-loader, separated-VM, and integration tests.             |
 | `CMakeLists.txt`        | Portable CMake build with system-Lua detection and bundled Lua fallback.                                                    |
 
 ## License
