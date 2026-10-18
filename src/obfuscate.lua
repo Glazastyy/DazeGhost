@@ -5,6 +5,7 @@ local crypt = require("src.crypt")
 local weave = require("src.weave")
 local random128 = require("src.random")
 local compress = require("src.compress")
+local pipeline = require("src.pipeline")
 
 local M = {}
 
@@ -192,6 +193,14 @@ function M.transform(src, opts)
         initial = (opts.seed ~ hash(src)) & MASK
     end
     local rand = random128.new(initial)
+    local context = {
+        options = opts,
+        rand = rand,
+        freshName = function()
+            return freshName(used, rand)
+        end
+    }
+    pipeline.run(ast, context, opts.steps)
     if opts.rename_locals ~= false then
         walk(ast, function(node)
             if node.tag == "name" and node.decl and not node.fixed then
@@ -203,6 +212,10 @@ function M.transform(src, opts)
         end)
     end
     local prefix = ""
+    if opts.anti_tamper == true then
+        local guard = freshName(used, rand)
+        prefix = "local " .. guard .. "=(function()local d=debug;if d and type(d.gethook)=='function' and d.gethook()~=nil then return false end;return true end)();if not " .. guard .. " then error('runtime integrity check failed') end;"
+    end
     if opts.encode_strings ~= false then
         local helper = freshName(used, rand)
         if protectStrings(ast, helper, rand) then

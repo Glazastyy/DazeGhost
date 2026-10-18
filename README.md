@@ -61,51 +61,57 @@ Run `./dazeghost --help` for the compact built-in help.
 
 ### Operation, input, and output
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `--minify` | Obfuscation | Parses Lua 5.4 and emits compact equivalent source. |
-| `--obfuscate` | Enabled | Runs transformation, sealing, and loader generation. |
-| `--anti-ia` | Disabled | Adds inactive structural decoy material. |
-| `-i`, `--input FILE` | Positional input | Reads the complete Lua source from `FILE`. |
-| `-d`, `--decoy FILE` | `caos.lua` | Reads decoy Lua source. It is parsed but never executed during generation. |
-| `-o`, `--output FILE` | Standard output | Writes the generated Lua artifact to `FILE`. |
+| Option                | Default          | Description                                                                |
+| --------------------- | ---------------- | -------------------------------------------------------------------------- |
+| `--minify`            | Obfuscation      | Parses Lua 5.4 and emits compact equivalent source.                        |
+| `--obfuscate`         | Enabled          | Runs transformation, sealing, and loader generation.                       |
+| `--anti-ia`           | Disabled         | Adds inactive structural decoy material.                                   |
+| `-i`, `--input FILE`  | Positional input | Reads the complete Lua source from `FILE`.                                 |
+| `-d`, `--decoy FILE`  | `caos.lua`       | Reads decoy Lua source. It is parsed but never executed during generation. |
+| `-o`, `--output FILE` | Standard output  | Writes the generated Lua artifact to `FILE`.                               |
 
 If both `--minify` and `--obfuscate` are supplied, the last operation-selection option wins.
 
 ### Transformation and sealing
 
-| Option | Default | Valid range | Description |
-| --- | --- | --- | --- |
-| `--rounds N` | `1` | `1` to `5` | Complete sealing rounds. Size and generation cost grow substantially with each round. |
-| `--density N` | `100` | `1` to `100` | Percentage of eligible decoy insertion points receiving decoy material. |
-| `--mode VALUE` | `bytecode` | `bytecode`, `text` | Stores compiled bytecode or transformed source. Bytecode is usually smaller but less portable. |
-| `--runtime VALUE` | `auto` | `auto`, `linear`, `state`, `table` | Selects the generated dispatcher. `auto` diversifies the dispatcher per build. |
-| `--min-chunk-size N` | Adaptive | `1` to `4096` | Minimum encrypted data-block size. |
-| `--max-chunk-size N` | Adaptive | `1` to `4096` | Maximum encrypted data-block size. It must not be smaller than the minimum. |
-| `--noise-density N` | `25` | `0` to `100` | Percentage of sealing instructions that receive a noise instruction. Later rounds use a lower adaptive default when omitted. |
-| `--no-mix-original` | Disabled | Flag | Excludes original-source fragments from later decoy rounds. |
-| `--no-flatten` | Disabled | Flag | Disables conservative control-flow flattening. |
-| `--no-encode-strings` | Disabled | Flag | Keeps string literals in emitted form. |
-| `-h`, `--help` | Disabled | Flag | Prints the command-line summary and exits. |
+| Option                        | Default    | Valid range                        | Description                                                                                                                  |
+| ----------------------------- | ---------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `--rounds N`                  | `1`        | `1` to `5`                         | Complete sealing rounds. Size and generation cost grow substantially with each round.                                        |
+| `--density N`                 | `100`      | `1` to `100`                       | Percentage of eligible decoy insertion points receiving decoy material.                                                      |
+| `--mode VALUE`                | `bytecode` | `bytecode`, `text`                 | Stores compiled bytecode or transformed source. Bytecode is usually smaller but less portable.                               |
+| `--runtime VALUE`             | `auto`     | `auto`, `linear`, `state`, `table` | Selects the generated dispatcher. `auto` diversifies the dispatcher per build.                                               |
+| `--min-chunk-size N`          | Adaptive   | `1` to `4096`                      | Minimum encrypted data-block size.                                                                                           |
+| `--max-chunk-size N`          | Adaptive   | `1` to `4096`                      | Maximum encrypted data-block size. It must not be smaller than the minimum.                                                  |
+| `--noise-density N`           | `25`       | `0` to `100`                       | Percentage of sealing instructions that receive a noise instruction. Later rounds use a lower adaptive default when omitted. |
+| `--no-mix-original`           | Disabled   | Flag                               | Excludes original-source fragments from later decoy rounds.                                                                  |
+| `--no-flatten`                | Disabled   | Flag                               | Disables conservative control-flow flattening.                                                                               |
+| `--no-encode-strings`         | Disabled   | Flag                               | Keeps string literals in emitted form.                                                                                       |
+| `--no-split-strings`          | Disabled   | Flag                               | Disables AST string fragmentation before string sealing.                                                                     |
+| `--no-numbers-to-expressions` | Disabled   | Flag                               | Disables equivalent expressions for eligible integer literals.                                                               |
+| `--no-constant-array`         | Disabled   | Flag                               | Disables the generated indirect constant pool.                                                                               |
+| `--no-proxify-locals`         | Disabled   | Flag                               | Disables proxy indirection for ordinary locals and local functions. Loop and attributed locals remain native.                 |
+| `--anti-tamper`               | Disabled   | Flag                               | Adds a best-effort runtime hook check and may reject debuggers or profilers.                                                 |
+| `--watermark TEXT`            | Disabled   | Text                               | Adds an encoded runtime watermark check. It is not a cryptographic signature.                                                |
+| `-h`, `--help`                | Disabled   | Flag                               | Prints the command-line summary and exits.                                                                                   |
 
 ### Reproducibility, limits, and packing
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `--seed N` | Fresh entropy | Uses an integer seed for reproducible generation. Without it, fresh 128-bit operating-system entropy is used. |
-| `--max-output-bytes N` | `12582912` | Maximum output of every sealing round. The operation fails when exceeded. |
-| `--max-intermediate-bytes N` | `max(8 * output, 67108864)` | Maximum transformed intermediate source size. |
-| `--compress` | Disabled | Runs the final LZ-style packer and keeps its loader only when it is smaller. |
-| `--native-loader` | Disabled | Embeds the final protected Lua payload into the native `dazeghost-loader` executable. Requires `--obfuscate`, `--secret`, and `--output`. |
+| Option                       | Default                     | Description                                                                                                                               |
+| ---------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `--seed N`                   | Fresh entropy               | Uses an integer seed for reproducible generation. Without it, fresh 128-bit operating-system entropy is used.                             |
+| `--max-output-bytes N`       | `12582912`                  | Maximum output of every sealing round. The operation fails when exceeded.                                                                 |
+| `--max-intermediate-bytes N` | `max(8 * output, 67108864)` | Maximum transformed intermediate source size.                                                                                             |
+| `--compress`                 | Disabled                    | Runs the final LZ-style packer and keeps its loader only when it is smaller.                                                              |
+| `--native-loader`            | Disabled                    | Embeds the final protected Lua payload into the native `dazeghost-loader` executable. Requires `--obfuscate`, `--secret`, and `--output`. |
 
 ### Runtime secret
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `--secret VALUE` | Disabled | Enables runtime password protection using `VALUE`. It is never printed. |
-| `--secret=VALUE` | Disabled | Equivalent form that avoids ambiguity with positional arguments. |
-| `--secret` | Disabled | Generates a fresh secret and saves it to `dazeghost.secret.txt`. |
-| `--secret-file FILE` | `dazeghost.secret.txt` | Destination for a generated secret. |
+| Option               | Default                | Description                                                             |
+| -------------------- | ---------------------- | ----------------------------------------------------------------------- |
+| `--secret VALUE`     | Disabled               | Enables runtime password protection using `VALUE`. It is never printed. |
+| `--secret=VALUE`     | Disabled               | Equivalent form that avoids ambiguity with positional arguments.        |
+| `--secret`           | Disabled               | Generates a fresh secret and saves it to `dazeghost.secret.txt`.        |
+| `--secret-file FILE` | `dazeghost.secret.txt` | Destination for a generated secret.                                     |
 
 For explicit secrets, prefer `--secret=VALUE` or use `--input`, because an optional argument is ambiguous with a positional input path.
 
@@ -131,6 +137,26 @@ Minification does not encrypt, seal, pack, or prompt for a password.
 ```
 
 The decoy file is parsed as data and never executed during generation.
+
+### AST transformation pipeline
+
+The default pipeline runs `split_strings`, `numbers_to_expressions`, `constant_array`, `proxify_locals`, and the optional `watermark` stage before local renaming, string encoding, and control-flow flattening. Each stage can be disabled independently with its CLI flag.
+
+Library callers can replace the default list with `steps`. Each custom stage receives `(ast, context)` and may mutate the AST in place. The context exposes `options`, `rand`, and `freshName()`.
+
+```lua
+local protected = obfuscate.transform(source, {
+    steps = {
+        "split_strings",
+        "numbers_to_expressions",
+        "constant_array",
+        "proxify_locals",
+        function(ast, context)
+            context.options.custom_stage_used = true
+        end
+    }
+})
+```
 
 ### Reproducible generation
 
@@ -211,6 +237,8 @@ The password option is a runtime access gate and key-diversification layer:
 
 The loader requires `io.read` and standard input. For non-interactive use, provide the secret through a controlled pipe. Do not log or expose it.
 
+When enabled, the anti-tamper option checks for an active `debug` hook through `debug.gethook`. This is intentionally best-effort and may reject debuggers or profilers; a host-controlled process can still remove or replace the check.
+
 This is not a hardware-backed key store or a guarantee against a hostile machine owner. An analyst can patch the check, instrument the loader, inspect memory after decryption, or capture the entered secret.
 
 ## Rounds, staging, and memory
@@ -280,7 +308,7 @@ local obfuscate = require("src.obfuscate")
 local result = obfuscate.obfuscate(source, options)
 ```
 
-Important options include `anti_ia`, `decoy_src`, `decoy_path`, `rounds`, `mix_original`, `decoy_density`, `max_decoy_fragments`, `flatten`, `rename_locals`, `encode_strings`, `min_chunk_size`, `max_chunk_size`, `noise_density`, `strip`, `mode`, `runtime`, `seed`, `secret`, `max_output_bytes`, `max_intermediate_bytes`, `compress_rounds`, and `stage_writer`.
+Important options include `anti_ia`, `decoy_src`, `decoy_path`, `rounds`, `mix_original`, `decoy_density`, `max_decoy_fragments`, `flatten`, `rename_locals`, `encode_strings`, `split_strings`, `split_min_length`, `numbers_to_expressions`, `constant_array`, `proxify_locals`, `watermark`, `anti_tamper`, `steps`, `min_chunk_size`, `max_chunk_size`, `noise_density`, `strip`, `mode`, `runtime`, `seed`, `secret`, `max_output_bytes`, `max_intermediate_bytes`, `compress_rounds`, and `stage_writer`.
 
 `stage_writer` receives `(data, round)` and must return the string passed into the next round. The C++ CLI supplies this callback to provide staged file boundaries.
 
@@ -321,6 +349,12 @@ C++ CLI
        ├─ lexical binder
        ├─ decoy weaver
        ├─ source transformer
+       ├─ configurable AST transformation pipeline
+       │    ├─ string splitting
+       │    ├─ numeric expression rewriting
+       │    ├─ constant pooling
+       │    ├─ local proxy indirection
+       │    └─ watermark validation
        ├─ compact emitter
        ├─ sealing runtime generator
        └─ final LZ-style packer
@@ -350,6 +384,7 @@ lua5.4 tests/runtime.lua
 lua5.4 tests/seed.lua
 lua5.4 tests/compress.lua
 lua5.4 tests/password.lua
+lua5.4 tests/transformations.lua
 lua5.4 tests/cli/run.lua
 ```
 
@@ -397,22 +432,24 @@ For real authorization, licensing, and sensitive business logic, keep the decisi
 
 ## Repository layout
 
-| Path | Purpose |
-| --- | --- |
-| `cpp/main.cpp` | C++17 generator CLI, embedded Lua runtime, progress reporting, staging, secret-file handling, and native payload packaging. |
-| `cpp/native_loader.cpp` | Native single-file loader that embeds the complete Lua 5.4 VM and executes an appended protected payload. |
-| `src/lexer.lua` | Lua 5.4 lexer. |
-| `src/parser.lua` | Recursive-descent and Pratt parser. |
-| `src/bind.lua` | Lexical scope binding. |
-| `src/emit.lua` | Compact Lua source emitter. |
-| `src/weave.lua` | Conservative decoy weaving. |
-| `src/crypt.lua` | Payload sealing and runtime loader generation. |
-| `src/compress.lua` | LZ-style packing and single-file loader generation. |
-| `src/random.lua` | 128-bit random-state initialization. |
-| `src/minify.lua` | Minification API. |
-| `src/obfuscate.lua` | Transformation and multi-round orchestration API. |
-| `tests/` | Semantic, property, runtime, seed, compression, password, native-loader, and integration tests. |
-| `CMakeLists.txt` | Portable CMake build with system-Lua detection and bundled Lua fallback. |
+| Path                    | Purpose                                                                                                                     |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `cpp/main.cpp`          | C++17 generator CLI, embedded Lua runtime, progress reporting, staging, secret-file handling, and native payload packaging. |
+| `cpp/native_loader.cpp` | Native single-file loader that embeds the complete Lua 5.4 VM and executes an appended protected payload.                   |
+| `src/lexer.lua`         | Lua 5.4 lexer.                                                                                                              |
+| `src/parser.lua`        | Recursive-descent and Pratt parser.                                                                                         |
+| `src/bind.lua`          | Lexical scope binding.                                                                                                      |
+| `src/emit.lua`          | Compact Lua source emitter.                                                                                                 |
+| `src/weave.lua`         | Conservative decoy weaving.                                                                                                 |
+| `src/crypt.lua`         | Payload sealing and runtime loader generation.                                                                              |
+| `src/compress.lua`      | LZ-style packing and single-file loader generation.                                                                         |
+| `src/random.lua`        | 128-bit random-state initialization.                                                                                        |
+| `src/minify.lua`        | Minification API.                                                                                                           |
+| `src/obfuscate.lua`     | Transformation and multi-round orchestration API.                                                                           |
+| `src/pipeline.lua`      | Ordered built-in and custom AST transformation stages.                                                                      |
+| `src/steps/`            | String splitting, numeric expressions, constant pooling, local proxy indirection, and watermark stages.                    |
+| `tests/`                | Semantic, property, runtime, seed, compression, password, native-loader, and integration tests.                             |
+| `CMakeLists.txt`        | Portable CMake build with system-Lua detection and bundled Lua fallback.                                                    |
 
 ## License
 

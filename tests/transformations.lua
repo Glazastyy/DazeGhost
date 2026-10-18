@@ -1,0 +1,131 @@
+local obfuscate = require("src.obfuscate")
+
+local function execute(source, environment)
+    environment = environment or _G
+    local chunk, err = load(source, "=transformations", "t", environment)
+    assert(chunk, err)
+    return table.pack(chunk())
+end
+
+do
+    local source = [[
+local first = 12345
+local second = 678
+return first + second
+]]
+    local output = obfuscate.transform(source, {
+        encode_strings = false,
+        split_strings = false,
+        constant_array = false,
+        numbers_to_expressions = true,
+        flatten = false,
+        seed = 17
+    })
+    assert(not output:find("12345", 1, true))
+    assert(not output:find("678", 1, true))
+    assert(execute(output)[1] == 13023)
+end
+
+do
+    local source = [[
+return "abcdefghij"
+]]
+    local output = obfuscate.transform(source, {
+        encode_strings = false,
+        split_strings = true,
+        constant_array = false,
+        numbers_to_expressions = false,
+        flatten = false,
+        seed = 18
+    })
+    assert(output:find("%.%."))
+    assert(execute(output)[1] == "abcdefghij")
+end
+
+do
+    local source = [[
+local label = "alpha"
+return label
+]]
+    local output = obfuscate.transform(source, {
+        encode_strings = false,
+        split_strings = false,
+        constant_array = true,
+        numbers_to_expressions = false,
+        flatten = false,
+        seed = 19
+    })
+    assert(output:find("alpha", 1, true))
+    assert(output:find("%[1%]"))
+    assert(execute(output)[1] == "alpha")
+end
+
+do
+    local source = "return 7"
+    local output = obfuscate.transform(source, {
+        encode_strings = false,
+        split_strings = false,
+        constant_array = false,
+        numbers_to_expressions = false,
+        flatten = false,
+        steps = {
+            function(ast)
+                ast.stats[1] = {
+                    tag = "return",
+                    explist = {{ tag = "number", value = "9" }}
+                }
+            end
+        }
+    })
+    assert(execute(output)[1] == 9)
+end
+
+do
+    local source = [[
+local function make()
+    local value = 4
+    return function(step)
+        value = value + step
+        return value
+    end
+end
+local nextValue = make()
+return nextValue(3), nextValue(2)
+]]
+    local output = obfuscate.transform(source, {
+        proxify_locals = true,
+        split_strings = false,
+        numbers_to_expressions = false,
+        constant_array = false,
+        flatten = false,
+        seed = 22
+    })
+    assert(output:find("%[1%]"))
+    local result = execute(output)
+    assert(result[1] == 7 and result[2] == 9)
+end
+
+do
+    local source = 'return "watermarked"'
+    local output = obfuscate.transform(source, {
+        watermark = "release-2026",
+        seed = 20
+    })
+    assert(not output:find("release%-2026"))
+    assert(execute(output)[1] == "watermarked")
+end
+
+do
+    local source = "return 1"
+    local output = obfuscate.transform(source, {
+        anti_tamper = true,
+        seed = 21
+    })
+    local environment = { debug = { gethook = function() return function() end end } }
+    setmetatable(environment, { __index = _G })
+    local chunk = assert(load(output, "=anti-tamper", "t", environment))
+    assert(not pcall(chunk))
+    assert(execute(output)[1] == 1)
+end
+
+print("passed: transformation pipeline checks")

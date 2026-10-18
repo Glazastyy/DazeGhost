@@ -36,6 +36,13 @@ struct Options {
     bool mix_original = true;
     bool flatten = true;
     bool encode_strings = true;
+    bool split_strings = true;
+    bool numbers_to_expressions = true;
+    bool constant_array = true;
+    bool proxify_locals = true;
+    bool anti_tamper = false;
+    bool has_watermark = false;
+    std::string watermark;
     bool compress = false;
     bool native_loader = false;
     bool has_secret = false;
@@ -87,6 +94,10 @@ static void usage(std::ostream& out) {
         << "  --runtime auto|linear|state|table\n"
         << "  --compress\n"
         << "  --native-loader\n"
+        << "  --anti-tamper\n"
+        << "  --watermark TEXT\n"
+        << "  --no-constant-array --no-numbers-to-expressions --no-split-strings\n"
+        << "  --no-proxify-locals\n"
         << "  --secret [VALUE]\n"
         << "  --secret-file FILE\n"
         << "  --seed N\n"
@@ -170,6 +181,26 @@ static bool parse_arguments(int argc, char** argv, Options& options, bool& anti_
             options.encode_strings = false;
             continue;
         }
+        if (argument == "--no-constant-array") {
+            options.constant_array = false;
+            continue;
+        }
+        if (argument == "--no-numbers-to-expressions") {
+            options.numbers_to_expressions = false;
+            continue;
+        }
+        if (argument == "--no-split-strings") {
+            options.split_strings = false;
+            continue;
+        }
+        if (argument == "--no-proxify-locals") {
+            options.proxify_locals = false;
+            continue;
+        }
+        if (argument == "--anti-tamper") {
+            options.anti_tamper = true;
+            continue;
+        }
         if (argument == "--compress") {
             options.compress = true;
             continue;
@@ -193,6 +224,18 @@ static bool parse_arguments(int argc, char** argv, Options& options, bool& anti_
         if (argument == "--secret-file") {
             if (!next_value(index, argc, argv, value)) return false;
             options.secret_file = value;
+            continue;
+        }
+        if (argument == "--watermark") {
+            if (!next_value(index, argc, argv, value)) return false;
+            options.watermark = value;
+            options.has_watermark = true;
+            continue;
+        }
+        if (argument.rfind("--watermark=", 0) == 0) {
+            options.watermark = argument.substr(12);
+            if (options.watermark.empty()) return false;
+            options.has_watermark = true;
             continue;
         }
         if (argument == "-i" || argument == "--input") {
@@ -438,6 +481,12 @@ int main(int argc, char** argv) {
         set_boolean(state, "mix_original", options.mix_original);
         set_boolean(state, "flatten", options.flatten);
         set_boolean(state, "encode_strings", options.encode_strings);
+        set_boolean(state, "split_strings", options.split_strings);
+        set_boolean(state, "numbers_to_expressions", options.numbers_to_expressions);
+        set_boolean(state, "constant_array", options.constant_array);
+        set_boolean(state, "proxify_locals", options.proxify_locals);
+        set_boolean(state, "anti_tamper", options.anti_tamper);
+        if (options.has_watermark) set_string(state, "watermark", options.watermark);
         if (options.has_seed) set_integer(state, "seed", options.seed);
         if (options.has_secret) set_string(state, "secret", options.secret);
         lua_pushlightuserdata(state, &stage_context);
