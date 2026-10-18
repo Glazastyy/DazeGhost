@@ -7,7 +7,9 @@ DazeGhost is a Lua 5.4 minifier and obfuscator with a C++17 command-line interfa
 - Lua 5.4
 - CMake 3.16 or newer
 - A C++17 compiler
-- Lua 5.4 development headers and library
+- Network access during the first CMake configuration when no compatible system Lua 5.4 is available
+
+The build first looks for a matching system Lua 5.4 installation. If it is unavailable, CMake downloads the pinned official Lua 5.4 source, verifies its SHA-256 hash, and builds it privately as a static library. A custom compatible installation can be selected with `-DDAZEGHOST_LUA_INCLUDE_DIR=/path/include -DDAZEGHOST_LUA_LIBRARY=/path/lib/liblua5.4.so`.
 
 ## Build
 
@@ -16,14 +18,14 @@ cmake -B build -S .
 cmake --build build
 ```
 
-The executable is `build/dazeghost`. It locates Lua modules next to the executable, one directory above it, through `DAZEGHOST_ROOT`, or from the current directory.
+The executable is generated at the project root as `./dazeghost`. It locates Lua modules next to the executable, one directory above it, through `DAZEGHOST_ROOT`, or from the current directory.
 
 ## Usage
 
 ```bash
-./build/dazeghost --minify -o minified.lua script.lua
-./build/dazeghost --obfuscate --anti-ia -i script.lua -d caos.lua -o protected.lua
-./build/dazeghost --obfuscate --anti-ia --rounds 5 --density 70 --compress -i script.lua -d caos.lua -o protected.lua
+./dazeghost --minify -o minified.lua script.lua
+./dazeghost --obfuscate --anti-ia -i script.lua -d caos.lua -o protected.lua
+./dazeghost --obfuscate --anti-ia --rounds 5 --density 70 --compress -i script.lua -d caos.lua -o protected.lua
 ```
 
 Use `--help` for the complete option list. The C++ executable is the supported command-line entry point; no Lua generator script is required.

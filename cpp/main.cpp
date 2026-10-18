@@ -84,6 +84,10 @@ static void usage(std::ostream& out) {
         << "  --no-mix-original --no-flatten --no-encode-strings\n";
 }
 
+static void status(const std::string& message) {
+    std::cerr << "[dazeghost] " << message << '\n';
+}
+
 static bool parse_unsigned(const std::string& text, std::uint64_t& value) {
     if (text.empty() || text.front() == '-') return false;
     const char* first = text.data();
@@ -276,11 +280,15 @@ int main(int argc, char** argv) {
         usage(std::cerr);
         return 2;
     }
+    status(options.mode == "minify" ? "Starting minification." : "Starting obfuscation.");
+    status("Reading input: " + options.input);
     const std::string source = slurp(options.input);
     if (source.empty() && !fs::exists(options.input)) {
         std::cerr << "cannot read input\n";
         return 1;
     }
+    status("Input loaded: " + std::to_string(source.size()) + " bytes.");
+    status("Initializing the embedded Lua 5.4 runtime.");
     lua_State* state = luaL_newstate();
     if (!state) {
         std::cerr << "lua state failed\n";
@@ -309,6 +317,7 @@ int main(int argc, char** argv) {
     int arguments = 1;
     StageContext stage_context{options.output.empty() ? fs::temp_directory_path() / "dazegghost-stage" : fs::path(options.output + ".stage")};
     if (options.mode == "obfuscate") {
+        status("Transforming and sealing " + std::to_string(options.rounds) + " round(s).");
         lua_newtable(state);
         set_boolean(state, "anti_ia", anti_ia);
         set_string(state, "decoy_src", options.decoy);
@@ -336,7 +345,9 @@ int main(int argc, char** argv) {
         lua_close(state);
         return 1;
     }
+    status("Transformation complete.");
     if (options.compress && options.mode == "obfuscate") {
+        status("Packing the final payload and evaluating its size.");
         lua_getglobal(state, "require");
         lua_pushstring(state, "src.compress");
         if (lua_pcall(state, 1, 1, 0) != LUA_OK) {
@@ -357,6 +368,9 @@ int main(int argc, char** argv) {
         const char* compressed = lua_tolstring(state, -1, &compressed_length);
         if (!original || !compressed || compressed_length >= original_length) {
             lua_pushvalue(state, -3);
+            status("Packed loader was not smaller; keeping the original sealed output.");
+        } else {
+            status("Packed loader selected: " + std::to_string(compressed_length) + " bytes before newline.");
         }
     }
     size_t length = 0;
@@ -370,14 +384,17 @@ int main(int argc, char** argv) {
     if (result.empty() || result.back() != '\n') result.push_back('\n');
     lua_close(state);
     if (options.output.empty()) {
+        status("Writing generated code to standard output.");
         std::cout.write(result.data(), static_cast<std::streamsize>(result.size()));
         return std::cout ? 0 : 1;
     }
+    status("Writing output: " + options.output);
     std::ofstream file(options.output, std::ios::binary);
     if (!file) {
         std::cerr << "cannot write output\n";
         return 1;
     }
     file.write(result.data(), static_cast<std::streamsize>(result.size()));
+    if (file) status("Completed: " + std::to_string(result.size()) + " bytes written.");
     return file ? 0 : 1;
 }

@@ -1,4 +1,5 @@
 /build/
+/dazeghost
 /CMakeFiles/
 /CMakeCache.txt
 *.o
