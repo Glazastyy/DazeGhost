@@ -315,6 +315,8 @@ Recommended starting points:
 
 Increase output limits deliberately and monitor memory for large five-round inputs.
 
+If the input is already a DazeGhost sealed or packed loader, the obfuscation pipeline recognizes the generated loader shape and re-seals it without sending the loader back through the AST transformer. This allows controlled successive sealing and avoids parser stack overflows caused by treating an expanded loader as ordinary source. The protected artifact is preserved as the payload; ordinary Lua source continues through the configured transformation pipeline.
+
 ## Final packing format
 
 `src.compress` uses an LZ-style stream with literal records and overlap-safe back references. Packed bytes are embedded directly as an escaped Lua binary literal. The output does not use Base64 or an external decompression library.

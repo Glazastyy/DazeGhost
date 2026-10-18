@@ -18,6 +18,12 @@ local function chainContext(layer)
     return "DazeGhost/chain/v1/" .. tostring(layer)
 end
 
+local function looksLikeProtectedArtifact(src)
+    local prefix = src:sub(1, 192)
+    return prefix:match("^%s*return%(%s*function%(%s*P,I,H,A,B,Z,X1,X2,X3,X4,X5,X6,E,Q,V,W,S,N,C,T%)") ~= nil
+        or prefix:match("^%s*return%(%s*function%(%s*C,E%)%s*local%s+") ~= nil
+end
+
 local layerProfiles = {
     { cipher_variant = 1, runtime = "linear" },
     { cipher_variant = 2, runtime = "state" },
@@ -302,7 +308,7 @@ function M.obfuscate(src, opts)
             step.chain_context = round > 1 and chainContext(round) or nil
         end
         local transformed
-        if round == 1 or transformEachRound then
+        if (round == 1 or transformEachRound) and not looksLikeProtectedArtifact(current) then
             transformed = M.transform(current, step)
         else
             transformed = current
