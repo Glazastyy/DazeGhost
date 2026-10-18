@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const childProcess = require('node:child_process');
 
 const MASK = 0xffffffff;
 const rotl = (v, n) => ((v << n) | (v >>> (32 - n))) >>> 0;
@@ -125,13 +126,111 @@ class BytecodeReader {
     const children = [];
     const nchildren = this.number();
     for (let j = 0; j < nchildren; j++) children.push(this.proto());
-    const lineInfo = this.number(); this.o += lineInfo;
-    const absLineInfo = this.number(); this.o += absLineInfo * 8;
+    const lineInfoSize = this.number();
+    const lineInfo = [];
+    for (let j = 0; j < lineInfoSize; j++) lineInfo.push(this.number());
+    const absLineInfo = this.number();
+    this.o += absLineInfo * 8;
     const locals = this.number();
-    for (let j = 0; j < locals; j++) { this.string(); this.number(); this.number(); }
+    const localNames = [];
+    for (let j = 0; j < locals; j++) localNames.push({ name: this.string(), start: this.number(), end: this.number() });
     const names = this.number();
-    for (let j = 0; j < names; j++) this.string();
-    return { source, params, stack, code, constants, children };
+    const upvalueNames = [];
+    for (let j = 0; j < names; j++) upvalueNames.push(this.string());
+    return { source, params, stack, code, constants, children, lineInfo, localNames, upvalueNames };
+  }
+}
+
+const OPCODE_NAMES = [
+  'MOVE', 'LOADI', 'LOADF', 'LOADK', 'LOADKX', 'LOADFALSE', 'LFALSESKIP', 'LOADTRUE',
+  'LOADNIL', 'GETUPVAL', 'SETUPVAL', 'GETTABUP', 'GETTABLE', 'GETI', 'GETFIELD',
+  'SETTABUP', 'SETTABLE', 'SETI', 'SETFIELD', 'NEWTABLE', 'SELF', 'ADD', 'SUB', 'MUL',
+  'MOD', 'POW', 'DIV', 'IDIV', 'BAND', 'BOR', 'BXOR', 'SHL', 'SHR', 'ADDK', 'SUBK',
+  'MULK', 'MODK', 'POWK', 'DIVK', 'IDIVK', 'BANDK', 'BORK', 'BXORK', 'SHLI', 'SHRI',
+  'ADDI', 'ADDK', 'MULK', 'MMBIN', 'MMBINI', 'MMBINK', 'UNM', 'BNOT', 'NOT', 'LEN',
+  'CONCAT', 'CLOSE', 'TBC', 'JMP', 'EQ', 'LT', 'LE', 'EQK', 'EQI', 'LTI', 'LEI', 'GTI',
+  'GEI', 'TEST', 'TESTSET', 'CALL', 'TAILCALL', 'RETURN', 'RETURN0', 'RETURN1', 'FORLOOP',
+  'FORPREP', 'TFORPREP', 'TFORCALL', 'TFORLOOP', 'SETLIST', 'CLOSURE', 'VARARG',
+  'VARARGPREP', 'EXTRAARG'
+];
+
+function formatConstant(value) {
+  if (value === null) return 'nil';
+  if (typeof value === 'boolean') return String(value);
+  if (typeof value === 'number') return String(value);
+  if (Buffer.isBuffer(value)) return JSON.stringify(value.toString('latin1'));
+  return JSON.stringify(String(value));
+}
+
+function decodeInstruction(ins) {
+  const op = ins & 127;
+  return {
+    op,
+    name: OPCODE_NAMES[op] || `OP_${op}`,
+    A: (ins >>> 7) & 255,
+    k: (ins >>> 15) & 1,
+    B: (ins >>> 16) & 255,
+    C: (ins >>> 24) & 255,
+    Bx: ins >>> 15,
+    sBx: (ins >>> 15) - 65535,
+    Ax: ins >>> 7
+  };
+}
+
+function renderProto(proto, index = 0, output = []) {
+  const title = proto.source ? proto.source.toString('latin1') : `proto_${index}`;
+  output.push(`function proto_${index}()`);
+  output.push(`  source = ${JSON.stringify(title)}`);
+  output.push(`  stack_slots = ${proto.stack}`);
+  output.push(`  parameters = ${proto.params}`);
+  for (let i = 0; i < proto.constants.length; i++) output.push(`  constant_${i} = ${formatConstant(proto.constants[i])}`);
+  for (let pc = 0; pc < proto.code.length; pc++) {
+    const instruction = decodeInstruction(proto.code[pc]);
+    const operands = [instruction.A, instruction.B, instruction.C, instruction.k, instruction.Bx, instruction.sBx, instruction.Ax].join(', ');
+    output.push(`  instruction_${pc + 1} = ${instruction.name}(${operands})`);
+  }
+  output.push('end');
+  output.push('');
+  for (let i = 0; i < proto.children.length; i++) renderProto(proto.children[i], `${index}_${i}`, output);
+  return output;
+}
+
+function reconstructLuaBytecode(buffer) {
+  const reader = new BytecodeReader(buffer);
+  const root = reader.proto();
+  if (reader.o !== buffer.length) throw new Error('Dados residuais após o bytecode');
+  return renderProto(root).join('\n');
+}
+
+function createFunctionalLua(buffer, name) {
+  const hex = buffer.toString('hex');
+  const lines = [
+    'local encoded = ' + JSON.stringify(hex),
+    'local bytes = {}',
+    'for index = 1, #encoded, 2 do',
+    '  bytes[#bytes + 1] = string.char(tonumber(encoded:sub(index, index + 1), 16))',
+    'end',
+    'local payload, loadError = load(table.concat(bytes), ' + JSON.stringify(`@${name}`) + ', "b", _ENV)',
+    'if not payload then',
+    '  error(loadError)',
+    'end',
+    'return payload()'
+  ];
+  return lines.join('\n') + '\n';
+}
+
+function disassembleLuaBytecode(buffer) {
+  const temporary = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'dazegghost-'));
+  const input = path.join(temporary, 'payload.bin');
+  fs.writeFileSync(input, buffer);
+  try {
+    for (const command of ['luac5.4', 'luac']) {
+      const result = childProcess.spawnSync(command, ['-l', '-l', input], { encoding: 'utf8' });
+      if (result.status === 0) return result.stdout;
+    }
+    return reconstructLuaBytecode(buffer);
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
   }
 }
 
@@ -283,8 +382,24 @@ function main() {
   }
   const finalFile = path.join(outputDir, report[report.length - 1].arquivo);
   fs.copyFileSync(finalFile, path.join(outputDir, 'payload_final.bin'));
+  const analysis = [];
+  for (const item of report) {
+    const binary = fs.readFileSync(path.join(outputDir, item.arquivo));
+    const prefix = path.join(outputDir, item.arquivo.replace(/\.bin$/, ''));
+    fs.writeFileSync(`${prefix}.reconstructed.lua`, reconstructLuaBytecode(binary));
+    fs.writeFileSync(`${prefix}.functional.lua`, createFunctionalLua(binary, item.arquivo));
+    fs.writeFileSync(`${prefix}.disassembly.txt`, disassembleLuaBytecode(binary));
+    analysis.push({ arquivo: item.arquivo, reconstructed: path.basename(`${prefix}.reconstructed.lua`), functional: path.basename(`${prefix}.functional.lua`), disassembly: path.basename(`${prefix}.disassembly.txt`) });
+  }
+  const finalBinary = fs.readFileSync(finalFile);
+  fs.writeFileSync(path.join(outputDir, 'payload_final.reconstructed.lua'), reconstructLuaBytecode(finalBinary));
+  fs.writeFileSync(path.join(outputDir, 'payload_final.functional.lua'), createFunctionalLua(finalBinary, 'payload_final.bin'));
+  fs.writeFileSync(path.join(outputDir, 'payload_final.disassembly.txt'), disassembleLuaBytecode(finalBinary));
   fs.writeFileSync(path.join(outputDir, 'relatorio.json'), JSON.stringify(report, null, 2));
+  fs.writeFileSync(path.join(outputDir, 'analise.json'), JSON.stringify(analysis, null, 2));
   process.stdout.write(`Finalizado: ${report.length} camadas. Payload: ${path.join(outputDir, 'payload_final.bin')}\n`);
 }
 
-main();
+if (require.main === module) main();
+
+module.exports = { BytecodeReader, decodeInstruction, reconstructLuaBytecode, disassembleLuaBytecode, unpackBytecode };
