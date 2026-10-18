@@ -142,11 +142,12 @@ static bool assign_unsigned(const std::string& text, std::uint64_t maximum, std:
     return true;
 }
 
-static bool parse_arguments(int argc, char** argv, Options& options, bool& anti_ia) {
+static bool parse_arguments(int argc, char** argv, Options& options, bool& anti_ia, bool& show_help) {
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "-h" || argument == "--help") {
             usage(std::cout);
+            show_help = true;
             return false;
         }
         if (argument == "--minify" || argument == "--obfuscate") {
@@ -358,7 +359,9 @@ static void set_string(lua_State* state, const char* name, const std::string& va
 int main(int argc, char** argv) {
     Options options;
     bool anti_ia = false;
-    if (!parse_arguments(argc, argv, options, anti_ia)) {
+    bool show_help = false;
+    if (!parse_arguments(argc, argv, options, anti_ia, show_help)) {
+        if (show_help) return 0;
         usage(std::cerr);
         return 2;
     }

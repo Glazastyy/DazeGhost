@@ -10,6 +10,9 @@ output="$tmp/protected"
 stdout="$tmp/stdout"
 stderr="$tmp/stderr"
 
+help=$("$root/dazeghost" --help)
+test "$(printf '%s\n' "$help" | grep -c '^usage: dazeghost')" -eq 1
+
 "$root/dazeghost" --obfuscate --mode text --secret="$secret" --native-loader --input "$root/script.lua" --output "$output" >"$stdout" 2>"$stderr"
 
 printf '%s\n' "$secret" | "$output" >"$stdout" 2>"$stderr"
