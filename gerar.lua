@@ -1,4 +1,5 @@
 local obfuscate = require("src.obfuscate")
+local compress = require("src.compress")
 
 local function help()
     print(table.concat({
@@ -9,11 +10,13 @@ local function help()
         "  --output, -o         Arquivo Lua gerado (padrao: protegido.lua)",
         "  --rounds, -r         Camadas de ofuscacao, de 1 a 5 (padrao: 1)",
         "  --mode               bytecode ou text (padrao: bytecode)",
+        "  --compress           Comprime o arquivo final em um loader unico",
         "  --runtime            auto, linear, state ou table (padrao: auto)",
         "  --seed               Inteiro para gerar resultados reproduziveis",
         "  --density            Percentual de pontos de mistura, de 1 a 100",
         "  --min-chunk-size     Tamanho minimo dos blocos",
         "  --max-chunk-size     Tamanho maximo dos blocos",
+        "  --noise-density      Percentual de instrucoes de ruido, de 0 a 100",
         "  --max-output-bytes   Limite para o arquivo gerado",
         "  --max-intermediate-bytes Limite para fontes intermediarias",
         "  --no-mix-original    Desativa a reinsercao de estruturas originais nas rodadas extras",
@@ -29,6 +32,7 @@ local defaults = {
     output = "protegido.lua",
     rounds = 1,
     mode = "bytecode",
+    compress = false,
     runtime = "auto",
     mix_original = true,
     flatten = true,
@@ -49,13 +53,14 @@ local parameters = {
     ["--density"] = "decoy_density",
     ["--min-chunk-size"] = "min_chunk_size",
     ["--max-chunk-size"] = "max_chunk_size",
+    ["--noise-density"] = "noise_density",
     ["--max-output-bytes"] = "max_output_bytes",
     ["--max-intermediate-bytes"] = "max_intermediate_bytes"
 }
 
 local numeric = {
     rounds = true, seed = true, decoy_density = true,
-    min_chunk_size = true, max_chunk_size = true,
+    min_chunk_size = true, max_chunk_size = true, noise_density = true,
     max_output_bytes = true, max_intermediate_bytes = true
 }
 
@@ -72,6 +77,8 @@ while cursor <= #argv do
         opts.flatten = false
     elseif flag == "--no-encode-strings" then
         opts.encode_strings = false
+    elseif flag == "--compress" then
+        opts.compress = true
     else
         local key = parameters[flag]
         if not key then
@@ -104,6 +111,16 @@ local function readFile(path)
 end
 
 local source = readFile(opts.input)
+local function writeStage(data, round)
+    local path = opts.output .. ".stage." .. tostring(round)
+    local stage = assert(io.open(path, "wb"))
+    assert(stage:write(data))
+    stage:close()
+    local content = readFile(path)
+    assert(os.remove(path))
+    collectgarbage("collect")
+    return content
+end
 local output = obfuscate.obfuscate(source, {
     anti_ia = true,
     decoy_src = opts.decoy,
@@ -115,13 +132,22 @@ local output = obfuscate.obfuscate(source, {
     decoy_density = opts.decoy_density,
     min_chunk_size = opts.min_chunk_size,
     max_chunk_size = opts.max_chunk_size,
+    noise_density = opts.noise_density,
     max_output_bytes = opts.max_output_bytes,
     max_intermediate_bytes = opts.max_intermediate_bytes,
     flatten = opts.flatten,
     encode_strings = opts.encode_strings,
     rename_locals = true,
-    strip = true
+    strip = true,
+    stage_writer = writeStage
 })
+
+if opts.compress then
+    local compressed = compress.wrap(output)
+    if #compressed < #output then
+        output = compressed
+    end
+end
 
 local file, err = io.open(opts.output, "wb")
 if not file then

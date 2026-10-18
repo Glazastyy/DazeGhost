@@ -177,6 +177,12 @@ Para mostrar todas as opções:
 lua5.4 gerar.lua --help
 ```
 
+Para gerar um loader único com o payload final compactado quando a compactação realmente reduzir o arquivo:
+
+```bash
+lua5.4 gerar.lua --input script.lua --decoy caos.lua --output protegido.lua --rounds 3 --density 70 --compress
+```
+
 ## Uso programático
 
 O campo `decoy_src` aceita o caminho de um arquivo Lua existente ou código Lua diretamente como string. `decoy_path` é uma opção alternativa que aceita apenas caminho. Caso um valor com aparência de arquivo `.lua` não exista, será apresentado um erro, em vez de tentar interpretar o nome do arquivo como código.
@@ -200,6 +206,7 @@ local result = obfuscate.obfuscate(source, {
     encode_strings = true,
     min_chunk_size = 24,
     max_chunk_size = 80,
+    noise_density = 25,
     strip = true,
     mode = "bytecode",
     runtime = "auto"
@@ -218,6 +225,8 @@ A inserção é conservadora: não executa o programa `caos.lua`, pois não seri
 
 A opção `rounds` aceita inteiros de 1 até 5. Rodadas adicionais elevam consideravelmente o tamanho final e os custos de geração e de carregamento. A opção `max_output_bytes` limita o tamanho gerado, por padrão a 12 MiB, e interrompe a operação com erro se o limite for excedido.
 
+Cada rodada é persistida temporariamente pelo CLI em um arquivo de estágio e o estágio anterior é liberado antes da próxima rodada. A transformação individual ainda precisa manter a etapa atual em memória, porque o parser, o compilador Lua e o selador operam sobre strings completas.
+
 ## Opções principais
 
 | Opção | Padrão | Finalidade |
@@ -234,6 +243,7 @@ A opção `rounds` aceita inteiros de 1 até 5. Rodadas adicionais elevam consid
 | `encode_strings` | `true` | Ofusca literais de strings com decodificação sob demanda |
 | `min_chunk_size` | `24` | Tamanho mínimo de cada fragmento de dados |
 | `max_chunk_size` | `80` | Tamanho máximo, limitado a 4096 |
+| `noise_density` | `25` | Percentual de instruções de ruído inseridas pelo selador; nas rodadas posteriores, o padrão interno é reduzido para controlar crescimento |
 | `strip` | `true` | Remove informações de depuração do bytecode |
 | `mode` | `bytecode` | Usa payload `bytecode` ou `text` |
 | `runtime` | `auto` | Escolhe o dispatcher `linear`, `state` ou `table`; `auto` diversifica por build |
@@ -241,10 +251,13 @@ A opção `rounds` aceita inteiros de 1 até 5. Rodadas adicionais elevam consid
 | `seed` ausente | 128 bits de entropia do sistema | Gera uma saída nova a cada execução; use `seed` explícita apenas para reprodução controlada |
 | `max_output_bytes` | 12582912 | Limite de tamanho do arquivo resultante |
 | `max_intermediate_bytes` | `max(8 × max_output_bytes, 64 MiB)` | Limite independente para fontes intermediárias entre rodadas |
+| `compress_rounds` | `false` | Compacta uma camada entre rodadas somente quando o resultado fica menor |
 
 ## Interfaces
 
 `require("src.obfuscate").obfuscate(source, options)` realiza todas as rodadas configuradas. `require("src.obfuscate").transform(source, options)` transforma uma etapa, sem empacotar. `require("src.crypt").seal(source, options)` sela um código Lua em uma camada; quando `anti_ia = true`, também aplica a mistura estrutural, se ainda não tiver sido feita pelo chamador.
+
+`require("src.compress").wrap(source)` produz um loader Lua autocontido que decodifica, descompacta, valida a integridade e executa o conteúdo. O CLI só substitui a saída pela versão compactada quando ela é menor, evitando aumentar o arquivo por causa da codificação do loader.
 
 ## Testes
 

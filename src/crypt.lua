@@ -17,6 +17,10 @@ local function validate(opts)
     end
     local minimum = opts.min_chunk_size or 24
     local maximum = opts.max_chunk_size or 80
+    local noiseDensity = opts.noise_density
+    if noiseDensity == nil then
+        noiseDensity = 25
+    end
     if type(minimum) ~= "number" or type(maximum) ~= "number"
         or minimum % 1 ~= 0 or maximum % 1 ~= 0
         or minimum < 1 or maximum < minimum or maximum > 4096 then
@@ -32,7 +36,10 @@ local function validate(opts)
         and opts.runtime ~= "state" and opts.runtime ~= "table" then
         error("runtime must be 'auto', 'linear', 'state' or 'table'", 3)
     end
-    return minimum, maximum
+    if type(noiseDensity) ~= "number" or noiseDensity % 1 ~= 0 or noiseDensity < 0 or noiseDensity > 100 then
+        error("noise_density must be an integer between 0 and 100", 3)
+    end
+    return minimum, maximum, noiseDensity
 end
 
 local function rotate(value, amount)
@@ -45,6 +52,15 @@ local function encrypt(data, key, multiplier, increment)
     local c = increment
     local d = (key ~ multiplier ~ increment) & MASK
     local result = {}
+    local chunk = {}
+    local chunkSize = 0
+    local function flush()
+        if chunkSize > 0 then
+            result[#result + 1] = table.concat(chunk)
+            chunk = {}
+            chunkSize = 0
+        end
+    end
     for i = 1, #data do
         local input = data:byte(i)
         a = (a + b + i) & MASK
@@ -56,10 +72,15 @@ local function encrypt(data, key, multiplier, increment)
         b = (b + c + multiplier) & MASK
         d = rotate((d ~ a) & MASK, 19)
         local output = (input ~ ((a ~ b ~ c ~ d) & 255)) & 255
-        result[i] = string.char(output)
+        chunkSize = chunkSize + 1
+        chunk[chunkSize] = string.char(output)
+        if chunkSize == 4096 then
+            flush()
+        end
         a = (a ~ (output * 257 + i)) & MASK
         d = (d + output + i) & MASK
     end
+    flush()
     return table.concat(result)
 end
 
@@ -71,11 +92,22 @@ local function shuffle(items, random)
 end
 
 local function packBytes(data)
-    local result = {}
+    local chunks = {}
+    local chunk = {}
+    local chunkSize = 0
     for i = 1, #data do
-        result[i] = tostring(data:byte(i))
+        chunkSize = chunkSize + 1
+        chunk[chunkSize] = tostring(data:byte(i))
+        if chunkSize == 256 then
+            chunks[#chunks + 1] = table.concat(chunk, ",")
+            chunk = {}
+            chunkSize = 0
+        end
     end
-    return "{" .. table.concat(result, ",") .. "}"
+    if chunkSize > 0 then
+        chunks[#chunks + 1] = table.concat(chunk, ",")
+    end
+    return "{" .. table.concat(chunks, ",") .. "}"
 end
 
 local function splitMaterial(value, salt)
@@ -83,7 +115,7 @@ local function splitMaterial(value, salt)
     return first, (value ~ first) & MASK
 end
 
-local function assemble(data, minimum, maximum, random)
+local function assemble(data, minimum, maximum, noiseDensity, random)
     local blocks = {}
     local ordered = {}
     local cursor = 1
@@ -100,6 +132,7 @@ local function assemble(data, minimum, maximum, random)
     for i, block in ipairs(blocks) do
         physical[block] = i
         packed[i] = packBytes(block.content)
+        block.content = nil
     end
     local opChunk = random(32, 240)
     local opNoise = random(32, 240)
@@ -113,7 +146,7 @@ local function assemble(data, minimum, maximum, random)
     local logical = {}
     for _, block in ipairs(ordered) do
         logical[#logical + 1] = { opChunk, physical[block] }
-        if random(0, 3) == 0 then
+        if random(1, 100) <= noiseDensity then
             logical[#logical + 1] = { opNoise, random(1, 65535) }
         end
     end
@@ -188,7 +221,7 @@ function M.seal(source, opts)
     if type(source) ~= "string" then
         error("source must be a string", 2)
     end
-    local minimum, maximum = validate(opts)
+    local minimum, maximum, noiseDensity = validate(opts)
     if opts.anti_ia == true and opts._decoy_woven ~= true then
         source = require("src.weave").weave(source, opts)
     end
@@ -207,7 +240,7 @@ function M.seal(source, opts)
     local multiplier = (random() | 1) & MASK
     local increment = (random() | 1) & MASK
     local encrypted = encrypt(raw, key, multiplier, increment)
-    local blocks, instructions, entry, opChunk, opNoise, opEnd = assemble(encrypted, minimum, maximum, random)
+    local blocks, instructions, entry, opChunk, opNoise, opEnd = assemble(encrypted, minimum, maximum, noiseDensity, random)
     local runtime = opts.runtime or "auto"
     if runtime == "auto" then
         runtime = ({ "linear", "state", "table" })[random(1, 3)]

@@ -25,11 +25,15 @@ struct Options {
     bool has_seed = false;
     std::uint32_t min_chunk_size = 24;
     std::uint32_t max_chunk_size = 80;
+    bool has_min_chunk_size = false;
+    bool has_max_chunk_size = false;
+    std::uint32_t noise_density = 25;
     std::uint64_t max_output_bytes = 12ULL * 1024ULL * 1024ULL;
     std::uint64_t max_intermediate_bytes = 0;
     bool mix_original = true;
     bool flatten = true;
     bool encode_strings = true;
+    bool compress = false;
 };
 
 static void usage(std::ostream& out) {
@@ -43,8 +47,10 @@ static void usage(std::ostream& out) {
         << "  --density N\n"
         << "  --mode bytecode|text\n"
         << "  --runtime auto|linear|state|table\n"
+        << "  --compress\n"
         << "  --seed N\n"
         << "  --min-chunk-size N --max-chunk-size N\n"
+        << "  --noise-density N\n"
         << "  --max-output-bytes N --max-intermediate-bytes N\n"
         << "  --no-mix-original --no-flatten --no-encode-strings\n";
 }
@@ -97,6 +103,10 @@ static bool parse_arguments(int argc, char** argv, Options& options, bool& anti_
             options.encode_strings = false;
             continue;
         }
+        if (argument == "--compress") {
+            options.compress = true;
+            continue;
+        }
         std::string value;
         if (argument == "-i" || argument == "--input") {
             if (!next_value(index, argc, argv, value)) return false;
@@ -135,8 +145,19 @@ static bool parse_arguments(int argc, char** argv, Options& options, bool& anti_
         if (argument == "--min-chunk-size" || argument == "--max-chunk-size") {
             std::uint64_t parsed = 0;
             if (!next_value(index, argc, argv, value) || !assign_unsigned(value, 4096, parsed) || parsed < 1) return false;
-            if (argument == "--min-chunk-size") options.min_chunk_size = static_cast<std::uint32_t>(parsed);
-            else options.max_chunk_size = static_cast<std::uint32_t>(parsed);
+            if (argument == "--min-chunk-size") {
+                options.min_chunk_size = static_cast<std::uint32_t>(parsed);
+                options.has_min_chunk_size = true;
+            } else {
+                options.max_chunk_size = static_cast<std::uint32_t>(parsed);
+                options.has_max_chunk_size = true;
+            }
+            continue;
+        }
+        if (argument == "--noise-density") {
+            std::uint64_t parsed = 0;
+            if (!next_value(index, argc, argv, value) || !assign_unsigned(value, 100, parsed)) return false;
+            options.noise_density = static_cast<std::uint32_t>(parsed);
             continue;
         }
         if (argument == "--max-output-bytes" || argument == "--max-intermediate-bytes") {
@@ -265,8 +286,9 @@ int main(int argc, char** argv) {
         set_integer(state, "decoy_density", options.density);
         set_string(state, "mode", options.payload_mode);
         set_string(state, "runtime", options.runtime);
-        set_integer(state, "min_chunk_size", options.min_chunk_size);
-        set_integer(state, "max_chunk_size", options.max_chunk_size);
+        if (options.has_min_chunk_size) set_integer(state, "min_chunk_size", options.min_chunk_size);
+        if (options.has_max_chunk_size) set_integer(state, "max_chunk_size", options.max_chunk_size);
+        set_integer(state, "noise_density", options.noise_density);
         set_integer(state, "max_output_bytes", static_cast<lua_Integer>(options.max_output_bytes));
         if (options.max_intermediate_bytes != 0) set_integer(state, "max_intermediate_bytes", static_cast<lua_Integer>(options.max_intermediate_bytes));
         set_boolean(state, "mix_original", options.mix_original);
@@ -280,6 +302,22 @@ int main(int argc, char** argv) {
         std::cerr << (error ? error : "Lua operation failed") << "\n";
         lua_close(state);
         return 1;
+    }
+    if (options.compress && options.mode == "obfuscate") {
+        lua_getglobal(state, "require");
+        lua_pushstring(state, "src.compress");
+        if (lua_pcall(state, 1, 1, 0) != LUA_OK) {
+            std::cerr << lua_tostring(state, -1) << "\n";
+            lua_close(state);
+            return 1;
+        }
+        lua_getfield(state, -1, "wrap");
+        lua_pushvalue(state, -3);
+        if (lua_pcall(state, 1, 1, 0) != LUA_OK) {
+            std::cerr << lua_tostring(state, -1) << "\n";
+            lua_close(state);
+            return 1;
+        }
     }
     size_t length = 0;
     const char* output = lua_tolstring(state, -1, &length);

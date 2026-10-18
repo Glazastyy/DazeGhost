@@ -4,6 +4,7 @@ local emit = require("src.emit")
 local crypt = require("src.crypt")
 local weave = require("src.weave")
 local random128 = require("src.random")
+local compress = require("src.compress")
 
 local M = {}
 
@@ -242,6 +243,7 @@ function M.obfuscate(src, opts)
     end
     local original = src
     local current = src
+    local transformEachRound = opts.transform_each_round == true
     for round = 1, rounds do
         local step = {}
         for key, value in pairs(opts) do
@@ -255,12 +257,41 @@ function M.obfuscate(src, opts)
         else
             step.original_src = nil
         end
-        local transformed = M.transform(current, step)
+        if opts.min_chunk_size == nil then
+            step.min_chunk_size = round == 1 and 24 or 96
+        end
+        if opts.max_chunk_size == nil then
+            step.max_chunk_size = round == 1 and 80 or 256
+        end
+        if opts.noise_density == nil then
+            step.noise_density = round == 1 and 25 or 8
+        end
+        local transformed
+        if round == 1 or transformEachRound then
+            transformed = M.transform(current, step)
+        else
+            transformed = current
+        end
         if #transformed > intermediateMaximum then
             error("maximum intermediate size exceeded during transformation at round " .. round, 2)
         end
         step._decoy_woven = true
         current = crypt.seal(transformed, step)
+        if opts.compress_rounds == true then
+            local compressed = compress.wrap(current)
+            if #compressed < #current then
+                current = compressed
+            end
+        end
+        if opts.stage_writer ~= nil then
+            if type(opts.stage_writer) ~= "function" then
+                error("stage_writer must be a function", 2)
+            end
+            current = opts.stage_writer(current, round)
+            if type(current) ~= "string" then
+                error("stage_writer must return a string", 2)
+            end
+        end
         if #current > maximum then
             error("maximum output size exceeded during sealing at round " .. round, 2)
         end
