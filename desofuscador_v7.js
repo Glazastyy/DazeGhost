@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const childProcess = require('node:child_process');
+const os = require('node:os');
 
 const MASK = 0xffffffff;
 const rotl = (v, n) => ((v << n) | (v >>> (32 - n))) >>> 0;
@@ -154,12 +155,27 @@ const OPCODE_NAMES = [
   'VARARGPREP', 'EXTRAARG'
 ];
 
+function formatLuaString(value) {
+  const bytes = Buffer.from(value, 'latin1');
+  let result = '';
+  for (const byte of bytes) {
+    if (byte === 34) result += '\\"';
+    else if (byte === 92) result += '\\\\';
+    else if (byte === 10) result += '\\n';
+    else if (byte === 13) result += '\\r';
+    else if (byte === 9) result += '\\t';
+    else if (byte >= 32 && byte <= 126) result += String.fromCharCode(byte);
+    else result += `\\${String(byte).padStart(3, '0')}`;
+  }
+  return `"${result}"`;
+}
+
 function formatConstant(value) {
   if (value === null) return 'nil';
   if (typeof value === 'boolean') return String(value);
   if (typeof value === 'number') return String(value);
-  if (Buffer.isBuffer(value)) return JSON.stringify(value.toString('latin1'));
-  return JSON.stringify(String(value));
+  if (Buffer.isBuffer(value)) return formatLuaString(value.toString('latin1'));
+  return formatLuaString(String(value));
 }
 
 function decodeInstruction(ins) {
@@ -180,7 +196,7 @@ function decodeInstruction(ins) {
 function renderProto(proto, index = 0, output = []) {
   const title = proto.source ? proto.source.toString('latin1') : `proto_${index}`;
   output.push(`function proto_${index}()`);
-  output.push(`  source = ${JSON.stringify(title)}`);
+  output.push(`  source = ${formatLuaString(title)}`);
   output.push(`  stack_slots = ${proto.stack}`);
   output.push(`  parameters = ${proto.params}`);
   for (let i = 0; i < proto.constants.length; i++) output.push(`  constant_${i} = ${formatConstant(proto.constants[i])}`);
@@ -219,18 +235,77 @@ function createFunctionalLua(buffer, name) {
   return lines.join('\n') + '\n';
 }
 
-function disassembleLuaBytecode(buffer) {
-  const temporary = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'dazegghost-'));
-  const input = path.join(temporary, 'payload.bin');
+function luaRegister(index) {
+  return Number.isInteger(index) ? `r${index}` : 'nil';
+}
+
+function decompiledInstruction(pc, opcode, operands, detail) {
+  const values = operands.match(/\d+/g)?.map(Number) || [];
+  const a = values[0];
+  const b = values[1];
+  const c = values[2];
+  const constant = detail?.trim();
+  const literal = constant?.startsWith('"') && constant.endsWith('"') && constant !== '"' ? constant : null;
+  const field = literal?.match(/^"(?:\\.|[^"\\])*"/)?.[0] || 'nil';
+  if (opcode === 'MOVE') return `  ${luaRegister(a)} = ${luaRegister(b)}`;
+  if (opcode === 'LOADK' && literal) return `  ${luaRegister(a)} = ${literal}`;
+  if (opcode === 'LOADI') return `  ${luaRegister(a)} = ${values[1]}`;
+  if (opcode === 'LOADFALSE') return `  ${luaRegister(a)} = false`;
+  if (opcode === 'LOADTRUE') return `  ${luaRegister(a)} = true`;
+  if (opcode === 'LOADNIL') return `  ${luaRegister(a)} = nil`;
+  if (opcode === 'NEWTABLE') return `  ${luaRegister(a)} = {}`;
+  if (opcode === 'GETFIELD' && constant) return `  ${luaRegister(a)} = ${luaRegister(b)}[${field}]`;
+  if (opcode === 'SETFIELD' && constant) return `  ${luaRegister(a)}[${field}] = ${luaRegister(b)}`;
+  if (opcode === 'GETI') return `  ${luaRegister(a)} = ${luaRegister(b)}[${c}]`;
+  if (opcode === 'SETI') return `  ${luaRegister(a)}[${b}] = ${luaRegister(c)}`;
+  if (opcode === 'LEN') return `  ${luaRegister(a)} = #${luaRegister(b)}`;
+  if (opcode === 'CONCAT') return `  ${luaRegister(a)} = table.concat({ ${luaRegister(b)}, ${luaRegister(c)} })`;
+  if (opcode === 'ADD' || opcode === 'SUB' || opcode === 'MUL' || opcode === 'MOD' || opcode === 'POW' || opcode === 'DIV' || opcode === 'IDIV') {
+    const operators = { ADD: '+', SUB: '-', MUL: '*', MOD: '%', POW: '^', DIV: '/', IDIV: '//' };
+    return `  ${luaRegister(a)} = ${luaRegister(b)} ${operators[opcode]} ${luaRegister(c)}`;
+  }
+  if (opcode === 'UNM') return `  ${luaRegister(a)} = -${luaRegister(b)}`;
+  if (opcode === 'NOT') return `  ${luaRegister(a)} = not ${luaRegister(b)}`;
+  if (opcode === 'JMP') return '  do end';
+  if (opcode === 'RETURN0') return '  do return end';
+  if (opcode === 'RETURN' || opcode === 'RETURN1') return `  do return ${luaRegister(a)} end`;
+  if (opcode === 'CLOSURE') return `  ${luaRegister(a)} = function(...) end`;
+  if (opcode === 'CALL') return `  ${luaRegister(a)}(${luaRegister(b)})`;
+  if (opcode === 'TAILCALL') return `  do return ${luaRegister(a)}(${luaRegister(b)}) end`;
+  if (opcode === 'CLOSE' || opcode === 'TBC' || opcode === 'EXTRAARG') return '  do end';
+  return `  do local opcode_${pc} = ${JSON.stringify(opcode)} end`;
+}
+
+function decompileLuaBytecode(buffer) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dazegghost-decompile-'));
+  const input = path.join(directory, 'payload.bin');
   fs.writeFileSync(input, buffer);
   try {
-    for (const command of ['luac5.4', 'luac']) {
-      const result = childProcess.spawnSync(command, ['-l', '-l', input], { encoding: 'utf8' });
-      if (result.status === 0) return result.stdout;
+    const result = childProcess.spawnSync('luac5.4', ['-l', '-l', input], { encoding: 'utf8' });
+    if (result.status !== 0) throw new Error(result.stderr || 'Não foi possível ler o bytecode Lua 5.4');
+    const output = ['local decompiled = {}', ''];
+    let functionIndex = 0;
+    let openFunction = false;
+    for (const line of result.stdout.split('\n')) {
+      const header = line.match(/^(main|function)\b/);
+      if (header) {
+        if (openFunction) output.push('end', '');
+        output.push(`local function proto_${functionIndex}()`);
+        output.push('  local r = {}');
+        openFunction = true;
+        functionIndex++;
+        continue;
+      }
+      const instruction = line.match(/^\s*(\d+)\s+\[[^\]]*\]\s+([A-Z0-9]+)\s*(.*)$/);
+      if (!instruction || !openFunction) continue;
+      const detailParts = instruction[3].split(';');
+      output.push(decompiledInstruction(Number(instruction[1]), instruction[2], detailParts[0], detailParts[1]));
     }
-    return reconstructLuaBytecode(buffer);
+    if (openFunction) output.push('end', '');
+    output.push('return decompiled');
+    return output.join('\n');
   } finally {
-    fs.rmSync(temporary, { recursive: true, force: true });
+    fs.rmSync(directory, { recursive: true, force: true });
   }
 }
 
@@ -386,15 +461,13 @@ function main() {
   for (const item of report) {
     const binary = fs.readFileSync(path.join(outputDir, item.arquivo));
     const prefix = path.join(outputDir, item.arquivo.replace(/\.bin$/, ''));
-    fs.writeFileSync(`${prefix}.reconstructed.lua`, reconstructLuaBytecode(binary));
+    fs.writeFileSync(`${prefix}.reconstructed.lua`, decompileLuaBytecode(binary));
     fs.writeFileSync(`${prefix}.functional.lua`, createFunctionalLua(binary, item.arquivo));
-    fs.writeFileSync(`${prefix}.disassembly.txt`, disassembleLuaBytecode(binary));
-    analysis.push({ arquivo: item.arquivo, reconstructed: path.basename(`${prefix}.reconstructed.lua`), functional: path.basename(`${prefix}.functional.lua`), disassembly: path.basename(`${prefix}.disassembly.txt`) });
+    analysis.push({ arquivo: item.arquivo, reconstructed: path.basename(`${prefix}.reconstructed.lua`) });
   }
   const finalBinary = fs.readFileSync(finalFile);
-  fs.writeFileSync(path.join(outputDir, 'payload_final.reconstructed.lua'), reconstructLuaBytecode(finalBinary));
+  fs.writeFileSync(path.join(outputDir, 'payload_final.reconstructed.lua'), decompileLuaBytecode(finalBinary));
   fs.writeFileSync(path.join(outputDir, 'payload_final.functional.lua'), createFunctionalLua(finalBinary, 'payload_final.bin'));
-  fs.writeFileSync(path.join(outputDir, 'payload_final.disassembly.txt'), disassembleLuaBytecode(finalBinary));
   fs.writeFileSync(path.join(outputDir, 'relatorio.json'), JSON.stringify(report, null, 2));
   fs.writeFileSync(path.join(outputDir, 'analise.json'), JSON.stringify(analysis, null, 2));
   process.stdout.write(`Finalizado: ${report.length} camadas. Payload: ${path.join(outputDir, 'payload_final.bin')}\n`);
@@ -402,4 +475,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { BytecodeReader, decodeInstruction, reconstructLuaBytecode, disassembleLuaBytecode, unpackBytecode };
+module.exports = { BytecodeReader, createFunctionalLua, decompileLuaBytecode, unpackBytecode };
