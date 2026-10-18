@@ -3,6 +3,7 @@ local bind = require("src.bind")
 local emit = require("src.emit")
 local crypt = require("src.crypt")
 local weave = require("src.weave")
+local random128 = require("src.random")
 
 local M = {}
 
@@ -14,19 +15,6 @@ local function hash(s)
         value = ((value ~ s:byte(i)) * 16777619) & MASK
     end
     return value
-end
-
-local function randomizer(seed)
-    local state = seed & MASK
-    if state == 0 then
-        state = 0x9E3779B9
-    end
-    return function()
-        state = (state ~ ((state << 13) & MASK)) & MASK
-        state = (state ~ (state >> 17)) & MASK
-        state = (state ~ ((state << 5) & MASK)) & MASK
-        return state
-    end
 end
 
 local function walk(node, visitor)
@@ -198,11 +186,11 @@ function M.transform(src, opts)
     local ast = bind.bind(parser.parse(src))
     local used = identifiers(ast)
     local mapping = {}
-    local initial = opts.seed
-    if initial == nil then
-        initial = (math.random(0, 0x7FFFFFFF) ~ os.time() ~ math.floor(os.clock() * 1000000)) & MASK
+    local initial
+    if opts.seed ~= nil then
+        initial = (opts.seed ~ hash(src)) & MASK
     end
-    local rand = randomizer(initial ~ hash(src))
+    local rand = random128.new(initial)
     if opts.rename_locals ~= false then
         walk(ast, function(node)
             if node.tag == "name" and node.decl and not node.fixed then

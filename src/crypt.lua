@@ -1,4 +1,5 @@
 local M = {}
+local random128 = require("src.random")
 
 local MASK = 0xFFFFFFFF
 
@@ -8,34 +9,6 @@ local function hash(data)
         value = ((value ~ data:byte(i)) * 16777619) & MASK
     end
     return value
-end
-
-local function entropy()
-    local file = io.open("/dev/urandom", "rb")
-    if file then
-        local data = file:read(4)
-        file:close()
-        if data and #data == 4 then
-            return string.unpack("<I4", data)
-        end
-    end
-    return (os.time() ~ math.floor(os.clock() * 1000000) ~ math.random(0, 0x7FFFFFFF)) & MASK
-end
-
-local function rng(initial)
-    local state = initial & MASK
-    if state == 0 then
-        state = 0x9E3779B9
-    end
-    return function(minimum, maximum)
-        state = (state ~ ((state << 13) & MASK)) & MASK
-        state = (state ~ (state >> 17)) & MASK
-        state = (state ~ ((state << 5) & MASK)) & MASK
-        if minimum ~= nil then
-            return minimum + state % (maximum - minimum + 1)
-        end
-        return state
-    end
 end
 
 local function validate(opts)
@@ -225,7 +198,11 @@ function M.seal(source, opts)
     end
     local mode = opts.mode or "bytecode"
     local raw = mode == "text" and source or string.dump(chunk, opts.strip ~= false)
-    local random = rng((opts.seed or entropy()) ~ hash(raw))
+    local randomSeed
+    if opts.seed ~= nil then
+        randomSeed = (opts.seed ~ hash(raw)) & MASK
+    end
+    local random = random128.new(randomSeed)
     local key = random()
     local multiplier = (random() | 1) & MASK
     local increment = (random() | 1) & MASK

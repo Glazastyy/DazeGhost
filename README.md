@@ -238,6 +238,7 @@ A opção `rounds` aceita inteiros de 1 até 5. Rodadas adicionais elevam consid
 | `mode` | `bytecode` | Usa payload `bytecode` ou `text` |
 | `runtime` | `auto` | Escolhe o dispatcher `linear`, `state` ou `table`; `auto` diversifica por build |
 | `seed` | aleatória | Semente para builds reproduzíveis |
+| `seed` ausente | 128 bits de entropia do sistema | Gera uma saída nova a cada execução; use `seed` explícita apenas para reprodução controlada |
 | `max_output_bytes` | 12582912 | Limite de tamanho do arquivo resultante |
 | `max_intermediate_bytes` | `max(8 × max_output_bytes, 64 MiB)` | Limite independente para fontes intermediárias entre rodadas |
 

@@ -1,5 +1,6 @@
 local parser = require("src.parser")
 local emit = require("src.emit")
+local random128 = require("src.random")
 
 local M = {}
 local MASK = 0xFFFFFFFF
@@ -10,22 +11,6 @@ local function hash(s)
         value = ((value ~ s:byte(i)) * 16777619) & MASK
     end
     return value
-end
-
-local function generator(seed)
-    local state = seed & MASK
-    if state == 0 then
-        state = 0x9E3779B9
-    end
-    return function(minimum, maximum)
-        state = (state ~ ((state << 13) & MASK)) & MASK
-        state = (state ~ (state >> 17)) & MASK
-        state = (state ~ ((state << 5) & MASK)) & MASK
-        if minimum then
-            return minimum + state % (maximum - minimum + 1)
-        end
-        return state
-    end
 end
 
 local function readFile(path)
@@ -195,8 +180,11 @@ function M.weave(src, opts)
         error("decoy does not contain usable Lua statements", 2)
     end
     local ast = parser.parse(src)
-    local seed = opts.seed or (os.time() ~ math.floor(os.clock() * 1000000) ~ math.random(1, 0x7FFFFFFF))
-    local rand = generator((seed ~ hash(src) ~ hash(decoy)) & MASK)
+    local seed
+    if opts.seed ~= nil then
+        seed = (opts.seed ~ hash(src) ~ hash(decoy)) & MASK
+    end
+    local rand = random128.new(seed)
     local unique = string.format("_dg_mix_%08x", rand())
     while src:find(unique, 1, true) or decoy:find(unique, 1, true) do
         unique = string.format("_dg_mix_%08x", rand())
