@@ -46,6 +46,19 @@ static fs::path executable_path(const char* argument) {
     return fs::absolute(argument, error);
 }
 
+static int native_load(lua_State* state) {
+    size_t length = 0;
+    const char* data = luaL_checklstring(state, 1, &length);
+    const char* name = luaL_optstring(state, 2, "=dazeghost-native-payload");
+    const char* mode = luaL_optstring(state, 3, "bt");
+    if (luaL_loadbufferx(state, data, length, name, mode) == LUA_OK) {
+        return 1;
+    }
+    lua_pushnil(state);
+    lua_insert(state, -2);
+    return 2;
+}
+
 int main(int argc, char** argv) {
     const fs::path executable = executable_path(argc > 0 ? argv[0] : "dazeghost-loader");
     std::string payload;
@@ -60,6 +73,8 @@ int main(int argc, char** argv) {
         return 1;
     }
     luaL_openlibs(state);
+    lua_pushcfunction(state, native_load);
+    lua_setglobal(state, "dazeghost_load");
     if (luaL_loadbufferx(state, payload.data(), payload.size(), "=dazeghost-native-payload", "t") != LUA_OK) {
         const char* message = lua_tostring(state, -1);
         std::cerr << (message ? message : "cannot load native payload") << '\n';

@@ -10,6 +10,8 @@ local pipeline = require("src.pipeline")
 local M = {}
 
 local MASK = 0xFFFFFFFF
+local IDENTIFIER_START = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+local IDENTIFIER_BODY = IDENTIFIER_START .. "0123456789"
 
 local function hash(s)
     local value = 2166136261
@@ -63,7 +65,15 @@ end
 
 local function freshName(used, rand)
     while true do
-        local name = string.format("_dg%08x", rand())
+        local length = 12 + rand(0, 8)
+        local bytes = {}
+        local firstIndex = rand(1, #IDENTIFIER_START)
+        bytes[1] = IDENTIFIER_START:sub(firstIndex, firstIndex)
+        for index = 2, length do
+            local position = rand(1, #IDENTIFIER_BODY)
+            bytes[index] = IDENTIFIER_BODY:sub(position, position)
+        end
+        local name = table.concat(bytes)
         if not used[name] then
             used[name] = true
             return name

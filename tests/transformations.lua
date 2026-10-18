@@ -1,4 +1,5 @@
 local obfuscate = require("src.obfuscate")
+local crypt = require("src.crypt")
 
 local function execute(source, environment)
     environment = environment or _G
@@ -113,6 +114,20 @@ do
     })
     assert(not output:find("release%-2026"))
     assert(execute(output)[1] == "watermarked")
+end
+
+do
+    local source = 'return "native dispatch"'
+    local output = crypt.seal(source, { seed = 23, mode = "text" })
+    local calls = 0
+    local environment = { dazeghost_load = function(data, name, mode)
+        calls = calls + 1
+        return assert(load(data, name, mode, environment))
+    end }
+    setmetatable(environment, { __index = _G })
+    local result = execute(output, environment)
+    assert(result[1] == "native dispatch")
+    assert(calls == 1)
 end
 
 do

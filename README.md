@@ -142,6 +142,8 @@ The decoy file is parsed as data and never executed during generation.
 
 The default pipeline runs `split_strings`, `numbers_to_expressions`, `constant_array`, `proxify_locals`, and the optional `watermark` stage before local renaming, string encoding, and control-flow flattening. Each stage can be disabled independently with its CLI flag.
 
+Local and generated identifiers use random legal Lua names with variable length and mixed case. The default build obtains fresh 128-bit operating-system entropy, so repeated builds with identical inputs produce different names and different transformation layouts. Supplying `--seed` intentionally makes the identifier sequence and the complete artifact reproducible.
+
 Library callers can replace the default list with `steps`. Each custom stage receives `(ast, context)` and may mutate the AST in place. The context exposes `options`, `rand`, and `freshName()`.
 
 ```lua
@@ -224,6 +226,8 @@ printf '%s\n' "$secret" | ./protected
 ```
 
 `--native-loader` requires a secret because the native artifact is intended to be a password-gated distribution unit. The generator fails early if the native template is unavailable or if an output path is not supplied.
+
+The native loader registers `dazeghost_load` inside the embedded VM. Protected layers use this C++ loading boundary when it exists and fall back to Lua's `load` for regular `.lua` output. This removes the most obvious Lua-level load hook from native execution while preserving compatibility with ordinary Lua loaders.
 
 ## Runtime password protection
 
@@ -414,7 +418,7 @@ The regular Lua output mode remains a Lua loader and therefore requires a compat
 
 ### No guaranteed anti-debugging
 
-The current release does not provide a complete anti-debugging system. Host-controlled processes can be traced, paused, instrumented, modified, or run under another Lua runtime.
+The current release does not provide a complete anti-debugging system. The optional hook check and the native `dazeghost_load` boundary raise the cost of simple instrumentation, but a host-controlled process can be traced, paused, instrumented, modified, or run under another Lua runtime.
 
 ### Integrity is not authenticity
 

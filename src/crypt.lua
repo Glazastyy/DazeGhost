@@ -194,7 +194,7 @@ local function makeLoader(blocks, instructions, entry, opChunk, opNoise, opEnd, 
     local passwordCode = "if W then local G=rawget(_ENV,'_G') or _ENV;local password=rawget(G,'__DazeGhostPassword');if password==nil then if not io or type(io.read)~='function' then error('password input is unavailable') end;io.write('DazeGhost password: ');password=io.read('*l');if type(password)~='string' then error('password is required') end;local check=2166136261;for i=1,#password do check=((check~password:byte(i))*16777619)&0xFFFFFFFF end;if check~=V then error('invalid password') end;rawset(G,'__DazeGhostPassword',password) end;local function derive(seed)local value=seed;for i=1,#password do value=((value~password:byte(i))*16777619)&0xFFFFFFFF end;return value end;X1=(X1~derive(0x6D2B79F5))&0xFFFFFFFF;X3=(X3~derive(0x1B873593))&0xFFFFFFFF;X5=(X5~derive(0x85EBCA6B))&0xFFFFFFFF end;"
     local position = assert(prefix:find(marker, 1, true))
     prefix = prefix:sub(1, position - 1) .. "return(function(P,I,H,A,B,Z,X1,X2,X3,X4,X5,X6,E,Q,V,W)" .. passwordCode .. prefix:sub(position + #marker)
-    local suffix = "if h~=E then error('payload integrity check failed') end;local fn,err=load(CONCAT(O),nil,Q);if not fn then error(err) end;return fn() end)(" .. args .. ")"
+    local suffix = "if h~=E then error('payload integrity check failed') end;local loader=rawget(_ENV,'dazeghost_load') or load;local fn,err=loader(CONCAT(O),nil,Q);if not fn then error(err) end;return fn() end)(" .. args .. ")"
     if variant == "linear" then
         return table.concat({
             prefix,
